@@ -52,18 +52,19 @@ jobs:
           channel: stable
           cache: true
 
-      # Only the two hand-edited platform files are tracked (see .gitignore),
-      # so the gradle scaffolding has to be regenerated here. `flutter create`
-      # overwrites AndroidManifest.xml, so the tracked one is restored after.
+      # Only the hand-edited platform files are tracked (see .gitignore), so
+      # the gradle scaffolding is regenerated here. `flutter create` overwrites
+      # the tracked files, so they are restored from git afterwards.
       - name: Regenerate the android platform folder
         working-directory: app
         run: |
-          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml
           flutter create --project-name remote_omp --org works.omp \
             --platforms=android .
-          cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          git checkout -- android/app/src/main/AndroidManifest.xml \
+                          android/app/build.gradle.kts
           grep -q 'android:scheme="remote-omp"' \
             android/app/src/main/AndroidManifest.xml
+          grep -q 'key.properties' android/app/build.gradle.kts
 
       # Fails the job when a signing secret is missing, rather than silently
       # falling back to the debug key and shipping an unverifiable APK.
@@ -90,44 +91,6 @@ jobs:
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
           } >> key.properties
-
-      - name: Wire the release signing config into gradle
-        working-directory: app/android
-        run: |
-          python3 - <<'PY'
-          import pathlib, re
-          p = pathlib.Path("app/build.gradle.kts")
-          s = p.read_text()
-
-          loader = '''import java.util.Properties
-          import java.io.FileInputStream
-
-          val keystoreProperties = Properties().apply {
-              load(FileInputStream(rootProject.file("key.properties")))
-          }
-
-          '''
-          s = loader + s
-
-          signing = '''    signingConfigs {
-                  create("release") {
-                      storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
-                      storePassword = keystoreProperties["storePassword"] as String
-                      keyAlias = keystoreProperties["keyAlias"] as String
-                      keyPassword = keystoreProperties["keyPassword"] as String
-                  }
-              }
-
-          '''
-          s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
-          s = re.sub(
-              r'signingConfig = signingConfigs\.getByName\("debug"\)',
-              'signingConfig = signingConfigs.getByName("release")',
-              s,
-          )
-          p.write_text(s)
-          PY
-          grep -q 'signingConfigs.getByName("release")' app/build.gradle.kts
 
       - run: flutter pub get
         working-directory: app

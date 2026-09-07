@@ -27,29 +27,37 @@ wire format is in [`docs/protocol.md`](docs/protocol.md).
 
 ### 1. The plugin
 
-Needs [Bun](https://bun.sh) and omp 18.1.11 or newer.
+Needs omp 18.1.11 or newer.
+
+```sh
+omp plugin install github:heavycaffeiner/omp-remote
+```
+
+That is the whole installation. The plugin loads itself in every session
+afterwards, starts its local server on port 8788, and is ready to pair.
+Everything below is optional.
+
+To pin a version or a branch, append a ref:
+
+```sh
+omp plugin install github:heavycaffeiner/omp-remote#v0.0.1
+```
+
+Upgrade and removal go the same way:
+
+```sh
+omp plugin upgrade omp-remote
+omp plugin uninstall omp-remote
+```
+
+To work on the plugin instead of just using it, clone it and load the working
+copy, which takes precedence over anything installed:
 
 ```sh
 git clone https://github.com/heavycaffeiner/omp-remote.git
-cd omp-remote/plugin
-bun install
+cd omp-remote && bun install
+omp --extension .
 ```
-
-Load it for one session:
-
-```sh
-omp --extension /path/to/omp-remote/plugin
-```
-
-Or permanently, in `~/.omp/agent/config.yml`:
-
-```yaml
-extensions:
-  - /path/to/omp-remote/plugin
-```
-
-With no configuration at all the plugin starts its local server on port 8788
-and is ready to pair. Everything below is optional.
 
 ### 2. The app
 
@@ -72,23 +80,12 @@ Android needs the Android SDK. iOS needs macOS with Xcode, plus
 
 Skip this if the phone can already reach your workstation.
 
-```sh
-cd relay
-cp .env.example .env
-```
-
-Generate three tokens and put them in `.env`:
+The relay ships as a container image for `linux/amd64` and `linux/arm64`.
+Generate three tokens, then run it:
 
 ```sh
 openssl rand -hex 32   # once per token
 ```
-
-```sh
-docker compose up -d --build
-curl localhost:8787/healthz     # expect: ok
-```
-
-A prebuilt image is published with each release:
 
 ```sh
 docker run -d -p 8787:8787 \
@@ -96,6 +93,18 @@ docker run -d -p 8787:8787 \
   -e OMP_RELAY_CONTROL_TOKEN=... \
   -e OMP_RELAY_VIEWER_TOKEN=... \
   ghcr.io/heavycaffeiner/omp-remote-relay:latest
+```
+
+```sh
+curl localhost:8787/healthz     # expect: ok
+```
+
+To build it from source instead, `relay/compose.yaml` reads the same three
+variables from a `.env` file:
+
+```sh
+cd relay && cp .env.example .env
+docker compose up -d --build
 ```
 
 Put TLS in front of it and hand out `wss://` URLs. Tokens travel in the
@@ -199,12 +208,39 @@ Known, and unlikely to change without upstream API work.
 ## Development
 
 ```sh
-cd relay  && go test ./... && go vet ./...
-cd plugin && bun run typecheck
-cd app    && flutter analyze && flutter test
+bun install && bun run typecheck          # plugin
+cd relay && go test ./... && go vet ./... # relay
+cd app   && flutter analyze && flutter test
 ```
 
 Go 1.27, Bun 1.4, Flutter 3.47 with Dart 3.13.
+
+### Releasing
+
+Pushing a `v*` tag builds the relay image for both architectures, builds a
+signed APK, and attaches it to a GitHub release.
+
+The APK is signed with an upload key held as repository secrets. The workflow
+fails if any is missing rather than falling back to the debug key, since a
+debug-signed APK cannot be upgraded in place by a properly signed one later.
+
+| Secret                       | What it holds                             |
+| ---------------------------- | ----------------------------------------- |
+| `ANDROID_KEYSTORE_BASE64`    | The keystore file, base64 encoded         |
+| `ANDROID_KEYSTORE_PASSWORD`  | Keystore password                         |
+| `ANDROID_KEY_ALIAS`          | Key alias inside the keystore             |
+| `ANDROID_KEY_PASSWORD`       | Password for that key                     |
+
+To create one:
+
+```sh
+keytool -genkey -v -keystore upload-keystore.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+base64 -w0 upload-keystore.jks
+```
+
+Keep the keystore. Losing it means no future build can update an installed
+app, because Android identifies an app by its signing key.
 
 ## License
 

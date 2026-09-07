@@ -9,16 +9,21 @@ relay/relay
 build/
 
 # Platform folders are regenerable with `flutter create --platforms=android,ios .`,
-# so only the files carrying hand-written configuration are tracked. Deep-link
-# registration and the camera usage strings do not survive a regenerate.
+# so only the files carrying hand-written configuration are tracked: deep-link
+# registration, the camera usage string, and the release signing config. None
+# of those survive a regenerate, so the release workflow restores them.
 app/android/*
 !app/android/app/
 app/android/app/*
+!app/android/app/build.gradle.kts
 !app/android/app/src/
 app/android/app/src/*
 !app/android/app/src/main/
 app/android/app/src/main/*
 !app/android/app/src/main/AndroidManifest.xml
+# Signing material, written at release time and never committed.
+app/android/key.properties
+app/android/*.jks
 app/ios/*
 !app/ios/Runner/
 app/ios/Runner/*
