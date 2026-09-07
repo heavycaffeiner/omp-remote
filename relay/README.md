@@ -7,9 +7,9 @@ content.
 ## Running locally
 
 ```
-export OMP_RELAY_AGENT_TOKEN=$(openssl rand -hex 32)
-export OMP_RELAY_CONTROL_TOKEN=$(openssl rand -hex 32)
-export OMP_RELAY_VIEWER_TOKEN=$(openssl rand -hex 32)  # optional
+export OMP_RELAY_AGENT_TOKEN=$(head -c 32 /dev/urandom | base64)
+export OMP_RELAY_CONTROL_TOKEN=$(head -c 32 /dev/urandom | base64)
+export OMP_RELAY_VIEWER_TOKEN=$(head -c 32 /dev/urandom | base64)  # optional
 go run .
 ```
 
@@ -19,7 +19,7 @@ Listens on `:8787` by default. `go test -race ./...` runs the test suite.
 
 ```
 cp .env.example .env
-# edit .env with real tokens (openssl rand -hex 32)
+# edit .env with real tokens (head -c 32 /dev/urandom | base64)
 docker compose up --build
 ```
 

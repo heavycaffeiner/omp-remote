@@ -63,7 +63,7 @@ omp --extension .
 
 Prebuilt Android APKs are attached to each
 [release](https://github.com/heavycaffeiner/omp-remote/releases). Download
-`remote-omp-<version>.apk` and install it.
+`ompremote-<version>.apk` and install it.
 
 To build it yourself, or to run on iOS:
 
@@ -84,7 +84,7 @@ The relay ships as a container image for `linux/amd64` and `linux/arm64`.
 Generate three tokens, then run it:
 
 ```sh
-openssl rand -hex 32   # once per token
+head -c 32 /dev/urandom | base64   # once per token
 ```
 
 ```sh

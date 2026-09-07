@@ -65,7 +65,11 @@ jobs:
                           ios/Runner/Info.plist
           grep -q 'android:scheme="remote-omp"' \
             android/app/src/main/AndroidManifest.xml
+          grep -q 'OMPRemote' android/app/src/main/AndroidManifest.xml
+          grep -q 'isCoreLibraryDesugaringEnabled' android/app/build.gradle.kts
           grep -q 'key.properties' android/app/build.gradle.kts
+          grep -q 'remote-omp' ios/Runner/Info.plist
+          grep -q 'OMPRemote' ios/Runner/Info.plist
 
       # Signing secrets, set on the repository:
       #   OMPREMOTE_ANDROID_KEYSTORE_BASE64    keystore file, base64 encoded
@@ -136,9 +140,18 @@ jobs:
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
-          "$APKSIGNER" verify --print-certs "$APK"
-          "$APKSIGNER" verify --print-certs "$APK" | grep -qi 'CN=' \
-            || { echo "::error::APK has no signing certificate" >&2; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK")
+          echo "$CERTS"
+          # A debug certificate also contains CN=, so naming it is the only
+          # check that distinguishes a real release key from the fallback.
+          if echo "$CERTS" | grep -qi 'CN=Android Debug'; then
+            echo "::error::APK is debug-signed" >&2
+            exit 1
+          fi
+          if ! echo "$CERTS" | grep -qi 'CN='; then
+            echo "::error::APK has no signing certificate" >&2
+            exit 1
+          fi
 
       # The resource shrinker has stripped this icon before, which only shows
       # up as a blank notification on a real device. aapt2 lists what actually
@@ -158,7 +171,7 @@ jobs:
         run: |
           mkdir -p dist
           cp app/build/app/outputs/flutter-apk/app-release.apk \
-             "dist/remote-omp-${GITHUB_REF_NAME}.apk"
+             "dist/ompremote-${GITHUB_REF_NAME}.apk"
 
       - name: Remove the signing material
         if: always()
