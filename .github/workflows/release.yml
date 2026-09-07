@@ -55,13 +55,14 @@ jobs:
       # Only the hand-edited platform files are tracked (see .gitignore), so
       # the gradle scaffolding is regenerated here. `flutter create` overwrites
       # the tracked files, so they are restored from git afterwards.
-      - name: Regenerate the android platform folder
+      - name: Regenerate platform scaffolding
         working-directory: app
         run: |
           flutter create --project-name remote_omp --org works.omp \
-            --platforms=android .
+            --platforms=android,ios .
           git checkout -- android/app/src/main/AndroidManifest.xml \
-                          android/app/build.gradle.kts
+                          android/app/build.gradle.kts \
+                          ios/Runner/Info.plist
           grep -q 'android:scheme="remote-omp"' \
             android/app/src/main/AndroidManifest.xml
           grep -q 'key.properties' android/app/build.gradle.kts
