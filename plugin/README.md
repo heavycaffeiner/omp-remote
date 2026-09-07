@@ -203,9 +203,15 @@ no-op'ing or calling something that would throw at runtime:
   the same way and for the same reason.
 
 - `run_command`: `ExtensionAPI` exposes no method to execute a slash
-  command. Submitting `/name` through the prompt path was tried and does not
-  work: the text reaches the model verbatim instead of being expanded, so
-  the command never runs. `commands` still lists what the session has.
+  command. Submitting `/name` through the prompt path was tried against a
+  live session and does not work: the text reaches the model verbatim
+  instead of being expanded, so the command never runs.
+
+`commands` still works, but read its result for what it is: `getCommands()`
+returns only extension, prompt, and skill commands. Built-ins such as
+`/rename`, `/model`, and `/compact` are absent from it even though the
+session has them, so the list is a subset and not an inventory of what the
+session can do.
 
 `compact` and reading commands (`state`, `history`, `tools`, `commands`,
 `models`, `system_prompt`) are unaffected: `ExtensionContext` exposes

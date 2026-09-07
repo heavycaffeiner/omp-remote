@@ -70,9 +70,10 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
               child: Semantics(
                 liveRegion: true,
                 child: Text(
-                  'These are the slash commands available in this session. '
-                  'The app has no way to run one remotely: type it at the '
-                  'workstation keyboard.',
+                  'Extension, prompt, and skill commands from this session. '
+                  'Built-ins such as /rename and /model are not listed here. '
+                  'The app cannot run any of them: type it at the workstation '
+                  'keyboard.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),

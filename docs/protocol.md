@@ -424,8 +424,12 @@ Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 There is no command that invokes a slash command remotely. The extension API
 exposes no method to execute one, and submitting `/name` through the prompt
 path was tested and does not work: it reaches the model as literal text
-instead of being expanded. `commands` still lists what the session has, which
-is useful to read, but running one is a workstation action.
+instead of being expanded. Running one is a workstation action.
+
+`commands` returns a subset, not an inventory: the extension API lists only
+extension, prompt, and skill commands, so built-ins the session really has
+(`/rename`, `/model`, `/compact`) do not appear. A client MUST present the
+result as a reference list and MUST NOT imply it is everything available.
 
 `bash` is a remote shell on the workstation. It runs only for a `control`
 connection and is refused when the plugin is started with
