@@ -135,6 +135,34 @@ function resolvePairingToken(
 	return { token };
 }
 
+interface HostedPairing {
+	url: string;
+	code: string;
+	expiresAt: number;
+}
+
+// Asks the session holding the port for a pairing code on this session's
+// behalf. A guest has no server of its own, so without this only the session
+// that happened to start first could be paired to.
+async function requestHostedPairing(port: number, role: "control" | "viewer"): Promise<HostedPairing | undefined> {
+	try {
+		const response = await fetch(`http://127.0.0.1:${port}/join?code=${role}`, {
+			signal: AbortSignal.timeout(2000),
+		});
+		if (!response.ok) return undefined;
+		const payload = (await response.json()) as Record<string, unknown>;
+		const url = payload.url;
+		const code = payload.code;
+		const expiresAt = payload.expiresAt;
+		if (typeof url !== "string" || typeof code !== "string" || typeof expiresAt !== "number") {
+			return undefined;
+		}
+		return { url, code, expiresAt };
+	} catch {
+		return undefined;
+	}
+}
+
 // Registers the /remote-omp command (docs/protocol.md, "Pairing"):
 //   bare    -> control link, direct preferred when the local server is up, relay fallback
 //   viewer  -> viewer link instead of control
@@ -152,8 +180,54 @@ export function registerRemoteOmpCommand(
 			const arg = argsText.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 			const role: "control" | "viewer" = arg === "viewer" ? "viewer" : "control";
 			const forceRelay = arg === "relay";
-
 			const local = getLocalServer();
+
+			// A guest session has no server of its own: the host holds the port
+			// for the whole workstation. Ask it for a code naming this session,
+			// so pairing works the same from any session rather than only the
+			// one that happened to start first.
+			if (!forceRelay && !local && config.local) {
+				const hosted = await requestHostedPairing(config.local.port, role);
+				if (hosted) {
+					const link = buildPairingLink(
+						{ transport: "direct", url: hosted.url, label: "Workstation" },
+						"",
+						role,
+						bridge.agentId,
+						bridge.info.name,
+					);
+					const minutes = Math.round((hosted.expiresAt - Date.now()) / 60000);
+					const roleLabel = role === "viewer" ? "Viewer, read-only" : "Control";
+					// The host reports the address it picked, which is loopback when
+					// it bound loopback. Offer the reachable interfaces too, since a
+					// phone cannot dial 127.0.0.1.
+					const port = Number(new URL(hosted.url.replace(/^ws:/, "http:")).port);
+					const reachable = directPairingTargets(port);
+					const lines = [
+						`${roleLabel} pairing for ${bridge.agentId}`,
+						"",
+						"This session is served by another one on this machine, so",
+						"pair against the shared address and pick it in the app:",
+						"",
+						`    Address:  ${(reachable[0]?.url ?? hosted.url).replace(/^ws:\/\//, "")}`,
+						`    Code:     ${hosted.code}`,
+						"",
+						`The code works once and expires in ${minutes} minutes.`,
+						`Then choose ${bridge.agentId} from the session list.`,
+					];
+					if (reachable.length > 1) {
+						lines.push("", "Other addresses for this workstation:");
+						for (let i = 1; i < reachable.length; i++) {
+							const target = reachable[i] as PairingTarget;
+							lines.push(`  ${target.label}: ${target.url.replace(/^ws:\/\//, "")}`);
+						}
+					}
+					lines.push("", await renderQr(link));
+					ctx.ui.notify(lines.join("\n"), "info");
+					return;
+				}
+			}
+
 			const transport: "direct" | "relay" = !forceRelay && local ? "direct" : "relay";
 
 			const tokenResult = resolvePairingToken(role, transport, config, local);

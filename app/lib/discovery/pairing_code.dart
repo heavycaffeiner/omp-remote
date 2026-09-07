@@ -24,7 +24,7 @@ class PairingCodeSuccess extends PairingCodeOutcome {
     required this.role,
     required this.agent,
     required this.name,
-    required this.cwd,
+    this.cwd,
   });
 
   final Uri url;
@@ -32,7 +32,8 @@ class PairingCodeSuccess extends PairingCodeOutcome {
   final ClientRole role;
   final String agent;
   final String name;
-  final String cwd;
+  /// Absent from a hub payload, which publishes no filesystem paths.
+  final String? cwd;
 }
 
 /// The server understood the request but rejected the code: unknown,
@@ -135,15 +136,15 @@ Future<PairingCodeOutcome> redeemPairingCode({
     final role = clientRoleFromJson(map['role']);
     final agent = asString(map['agent']);
     final name = asString(map['name']);
-    final cwd = asString(map['cwd']);
     final url = urlRaw == null ? null : Uri.tryParse(urlRaw);
+    // No cwd: the host serves anyone who can reach the port, so it does not
+    // publish filesystem paths. The agent id carries the project name.
     if (url == null ||
         (url.scheme != 'ws' && url.scheme != 'wss') ||
         token == null ||
         role == null ||
         agent == null ||
-        name == null ||
-        cwd == null) {
+        name == null) {
       return PairingCodeNetworkError(
         host: host,
         port: port,
@@ -156,7 +157,7 @@ Future<PairingCodeOutcome> redeemPairingCode({
       role: role,
       agent: agent,
       name: name,
-      cwd: cwd,
+      cwd: asString(map['cwd']),
     );
   } finally {
     client.close(force: true);

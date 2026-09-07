@@ -293,15 +293,30 @@ export class LocalServer {
 			return new Response("ok", { status: 200 });
 		}
 
-		// How another session on this machine gets the agent token. Restricted
-		// to the loopback peer address: the Host header is whatever the client
-		// chose to send, so a LAN host could claim 127.0.0.1 and register
-		// itself as one of this workstation's sessions.
+		// How another session on this machine gets what it needs from the host:
+		// the agent token to attach with, and, when asked, a pairing code so a
+		// guest can be paired to as readily as the host. Restricted to the
+		// loopback peer address, since the Host header is whatever the client
+		// chose to send and a LAN host could otherwise claim 127.0.0.1.
 		if (url.pathname === "/join") {
 			const peer = server.requestIP(req)?.address ?? "";
 			const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
 			if (!loopback) return new Response("forbidden", { status: 403 });
-			return Response.json({ v: PROTOCOL_VERSION, token: this.tokens.agent });
+
+			const wantCode = url.searchParams.get("code");
+			if (wantCode === null) {
+				return Response.json({ v: PROTOCOL_VERSION, token: this.tokens.agent });
+			}
+			const role: Role = wantCode === "viewer" ? "viewer" : "control";
+			const issued = this.issuePairingCode(role);
+			return Response.json({
+				v: PROTOCOL_VERSION,
+				token: this.tokens.agent,
+				code: issued.code,
+				expiresAt: issued.expiresAt,
+				url: `ws://${this.pairingHost()}:${this.port}`,
+				role,
+			});
 		}
 
 		// Doubles as the discovery endpoint: an app asking this one port learns

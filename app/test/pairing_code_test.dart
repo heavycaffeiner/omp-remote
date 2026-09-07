@@ -111,6 +111,33 @@ void main() {
       );
     });
 
+    test('accepts a hub payload that carries no cwd', () async {
+      // The host serves anyone who can reach the port, so it publishes no
+      // filesystem paths. Requiring cwd here rejected every real redemption.
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          '{"v":2,"t":"direct","url":"ws://100.64.0.3:8788",'
+          '"name":"omp-remote","agent":"laptop/proj#ab12",'
+          '"role":"control","token":"0123456789abcdef"}',
+        );
+        await request.response.close();
+      });
+
+      final outcome = await redeemPairingCode(
+        host: server.address.address,
+        port: server.port,
+        code: 'HZE6VD',
+      );
+
+      expect(outcome, isA<PairingCodeSuccess>());
+      final success = outcome as PairingCodeSuccess;
+      expect(success.agent, 'laptop/proj#ab12');
+      expect(success.token, '0123456789abcdef');
+      expect(success.cwd, isNull);
+    });
+
     test('names the host and port on a connection failure', () async {
       // Bind and immediately close: guarantees nothing is listening on this
       // port, producing a real connection-refused failure.
