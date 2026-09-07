@@ -232,6 +232,7 @@ export function registerRemoteOmpCommand(
 							lines.push(`  ${target.label}: ${target.url.replace(/^ws:\/\//, "")}`);
 						}
 					}
+					lines.push("", "Or paste this link into the app:", "", link);
 					lines.push("", await renderQr(link));
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
@@ -283,9 +284,13 @@ export function registerRemoteOmpCommand(
 					`    Code:     ${issued.code}`,
 					"",
 					`The code works once and expires in ${minutes} minutes.`,
+					"",
+					"Or paste this link into the app:",
+					"",
+					primaryLink,
 				);
 			} else {
-				lines.push("Cannot scan? Open this link on the device:", "", primaryLink);
+				lines.push("Cannot scan? Paste this link into the app:", "", primaryLink);
 			}
 
 			if (links.length > 1) {

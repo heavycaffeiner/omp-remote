@@ -207,9 +207,9 @@ GET /join?code=control
 ```
 
 ```jsonc
-{ "v": 2, "token": "<agent token>", "code": "HZE6VD", "expiresAt": 1788546521,
-  "url": "ws://100.64.0.3:8788", "role": "control",
-  "clientToken": "0266e40e..." }
+{ "v": 2, "token": "<agent token>", "code": "HZE6VD",
+  "expiresAt": 1788546521000, "url": "ws://100.64.0.3:8788",
+  "role": "control", "clientToken": "0266e40e..." }
 ```
 
 `token` is the agent token, which is what a guest dials `/agent` with.

@@ -61,14 +61,16 @@ Runner > Signing & Capabilities.
 The easiest path is pairing: run `/remote-omp` in an omp session on the
 workstation, which prints a QR code and a `remote-omp://pair?...` link.
 Scanning the code (or tapping the link on the same device) fills in the
-relay/direct URL, the token, the role, and the agent id automatically, and
-you confirm and save before connecting.
+relay/direct URL, the token, and the role automatically, and you confirm and
+save before connecting. A relay link also names the session; a direct link
+does not, because a direct connection reaches every session on the
+workstation and you pick one from the roster.
 
 If the camera cannot read the code, "Paste a link" takes the same
 `remote-omp://pair?...` string typed or pasted by hand. It carries the URL,
-the token, the role, and the session, so one paste is the whole connection.
-The role in the link is only a hint; the authoritative role is whatever the
-server reports in its `welcome` frame, and the UI defers to that.
+the token, and the role, so one paste is the whole connection. The role in
+the link is only a hint; the authoritative role is whatever the server
+reports in its `welcome` frame, and the UI defers to that.
 
 When neither is possible, "Enter a code" takes the workstation address and
 the six-character code printed alongside the QR.
