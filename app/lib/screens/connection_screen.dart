@@ -26,11 +26,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   List<SavedProfile> _profiles = const [];
   bool _showManualForm = false;
 
-  final _formKey = GlobalKey<FormState>();
-  final _labelController = TextEditingController();
-  final _urlController = TextEditingController();
-  final _tokenController = TextEditingController();
-  ClientRole _manualRole = ClientRole.control;
+  final _linkController = TextEditingController();
 
   @override
   void initState() {
@@ -44,9 +40,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 
   @override
   void dispose() {
-    _labelController.dispose();
-    _urlController.dispose();
-    _tokenController.dispose();
+    _linkController.dispose();
     super.dispose();
   }
 
@@ -91,31 +85,32 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _submitManualForm() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    final uri = Uri.tryParse(_urlController.text.trim());
-    if (uri == null || (uri.scheme != 'ws' && uri.scheme != 'wss')) {
-      _showError('URL must be a valid ws:// or wss:// address.');
+  /// Takes the whole `remote-omp://pair?...` link from `/remote-omp`. One
+  /// paste carries the address, the token, the role, and the session, so
+  /// there is nothing left to fill in by hand.
+  Future<void> _submitLink() async {
+    final raw = _linkController.text.trim();
+    if (raw.isEmpty) {
+      _showError('Paste the link shown by /remote-omp.');
       return;
     }
-    final label = _labelController.text.trim().isEmpty
-        ? uri.host
-        : _labelController.text.trim();
-    final saved = SavedProfile(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      label: label,
-      url: uri.toString(),
-      token: _tokenController.text,
-      role: _manualRole,
-    );
-    await widget.profileStore.upsert(saved);
+    final result = PairingPayload.parse(raw);
+    if (result is! PairingPayload) {
+      _showError('Pairing link error: $result');
+      return;
+    }
     if (!mounted) return;
-    _labelController.clear();
-    _urlController.clear();
-    _tokenController.clear();
+    _linkController.clear();
     setState(() => _showManualForm = false);
-    _reloadProfiles();
-    await _connectWithProfile(saved);
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PairingReviewScreen(
+          payload: result,
+          profileStore: widget.profileStore,
+        ),
+      ),
+    );
+    if (saved == true && mounted) _reloadProfiles();
   }
 
   Future<void> _scanQr() async {
@@ -259,97 +254,66 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             Semantics(
               button: true,
               label: _showManualForm
-                  ? 'Hide manual connection form'
-                  : 'Enter connection details manually',
+                  ? 'Hide the pairing link field'
+                  : 'Paste a pairing link',
               child: OutlinedButton.icon(
                 onPressed: () =>
                     setState(() => _showManualForm = !_showManualForm),
                 icon: Icon(
                   _showManualForm ? Icons.expand_less : Icons.expand_more,
                 ),
-                label: const Text('Enter manually'),
+                label: const Text('Paste a link'),
               ),
             ),
-            if (_showManualForm) _buildManualForm(context),
+            if (_showManualForm) _buildLinkForm(context),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildManualForm(BuildContext context) {
+  Widget _buildLinkForm(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: 16),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextFormField(
-              controller: _labelController,
-              decoration: const InputDecoration(labelText: 'Name (optional)'),
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _urlController,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Run /remote-omp on your workstation and paste the link it '
+            'prints. It carries the address, the token, and which session '
+            'to open.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            label: 'Pairing link',
+            textField: true,
+            child: TextField(
+              controller: _linkController,
               decoration: const InputDecoration(
-                labelText: 'Relay or direct URL',
-                hintText: 'wss://relay.example.com or ws://100.64.0.3:8788',
+                labelText: 'Pairing link',
+                hintText: 'remote-omp://pair?v=2&...',
               ),
               keyboardType: TextInputType.url,
               autocorrect: false,
               enableSuggestions: false,
-              textInputAction: TextInputAction.next,
-              validator: (value) => (value == null || value.trim().isEmpty)
-                  ? 'URL is required'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _tokenController,
-              decoration: const InputDecoration(labelText: 'Client token'),
-              obscureText: true,
-              keyboardType: TextInputType.visiblePassword,
-              autocorrect: false,
-              enableSuggestions: false,
+              maxLines: 2,
+              minLines: 1,
               textInputAction: TextInputAction.done,
-              validator: (value) =>
-                  (value == null || value.isEmpty) ? 'Token is required' : null,
+              onSubmitted: (_) => _submitLink(),
             ),
-            const SizedBox(height: 12),
-            Semantics(
-              label: 'Expected connection role',
-              child: SegmentedButton<ClientRole>(
-                segments: const [
-                  ButtonSegment(
-                    value: ClientRole.control,
-                    label: Text('Control'),
-                    icon: Icon(Icons.edit),
-                  ),
-                  ButtonSegment(
-                    value: ClientRole.viewer,
-                    label: Text('Viewer'),
-                    icon: Icon(Icons.visibility),
-                  ),
-                ],
-                selected: {_manualRole},
-                onSelectionChanged: (selection) =>
-                    setState(() => _manualRole = selection.first),
-              ),
+          ),
+          const SizedBox(height: 16),
+          Semantics(
+            button: true,
+            label: 'Connect using this link',
+            child: ElevatedButton(
+              onPressed: _submitLink,
+              child: const Text('Connect'),
             ),
-            const SizedBox(height: 16),
-            Semantics(
-              button: true,
-              label: 'Save and connect',
-              child: ElevatedButton(
-                onPressed: _submitManualForm,
-                child: const Text('Save and connect'),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

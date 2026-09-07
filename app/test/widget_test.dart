@@ -9,6 +9,10 @@ import 'package:remote_omp/relay_client.dart';
 import 'package:remote_omp/session_store.dart';
 import 'package:remote_omp/widgets/state_header.dart';
 import 'package:remote_omp/widgets/transcript_view.dart';
+import 'package:remote_omp/profile_store.dart';
+import 'package:remote_omp/screens/connection_screen.dart';
+import 'package:remote_omp/screens/pairing_review_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('transcript view renders a streaming assistant block and a finalized tool call',
@@ -67,5 +71,26 @@ void main() {
     final malformedState = StateSnapshot.fromJson({'streaming': 'not-a-bool', 'queued': 'also-not-int'});
     expect(malformedState.streaming, isFalse);
     expect(malformedState.queued, 0);
+  });
+
+  testWidgets('a pasted pairing link goes straight to the review screen', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = ProfileStore(await SharedPreferences.getInstance());
+    await tester.pumpWidget(
+      MaterialApp(home: ConnectionScreen(profileStore: store)),
+    );
+
+    await tester.tap(find.text('Paste a link'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(TextField),
+      'remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788'
+          '&token=0123456789abcdef&role=control&name=laptop',
+    );
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PairingReviewScreen), findsOneWidget);
   });
 }

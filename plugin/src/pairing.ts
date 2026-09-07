@@ -139,11 +139,13 @@ interface HostedPairing {
 	url: string;
 	code: string;
 	expiresAt: number;
+	clientToken: string;
 }
 
 // Asks the session holding the port for a pairing code on this session's
-// behalf. A guest has no server of its own, so without this only the session
-// that happened to start first could be paired to.
+// behalf, plus the client token that code stands for. A guest has no server
+// of its own, so without this only the session that happened to start first
+// could be paired to.
 async function requestHostedPairing(port: number, role: "control" | "viewer"): Promise<HostedPairing | undefined> {
 	try {
 		const response = await fetch(`http://127.0.0.1:${port}/join?code=${role}`, {
@@ -151,13 +153,16 @@ async function requestHostedPairing(port: number, role: "control" | "viewer"): P
 		});
 		if (!response.ok) return undefined;
 		const payload = (await response.json()) as Record<string, unknown>;
-		const url = payload.url;
-		const code = payload.code;
-		const expiresAt = payload.expiresAt;
-		if (typeof url !== "string" || typeof code !== "string" || typeof expiresAt !== "number") {
+		const { url, code, expiresAt, clientToken } = payload;
+		if (
+			typeof url !== "string" ||
+			typeof code !== "string" ||
+			typeof expiresAt !== "number" ||
+			typeof clientToken !== "string"
+		) {
 			return undefined;
 		}
-		return { url, code, expiresAt };
+		return { url, code, expiresAt, clientToken };
 	} catch {
 		return undefined;
 	}
@@ -189,27 +194,32 @@ export function registerRemoteOmpCommand(
 			if (!forceRelay && !local && config.local) {
 				const hosted = await requestHostedPairing(config.local.port, role);
 				if (hosted) {
+					const minutes = Math.round((hosted.expiresAt - Date.now()) / 60000);
+					const roleLabel = role === "viewer" ? "Viewer, read-only" : "Control";
+					// The host reports the address it bound, which is loopback when
+					// it bound loopback. A phone cannot dial that, so the link and
+					// the printed address both use a reachable interface.
+					const port = Number(new URL(hosted.url.replace(/^ws:/, "http:")).port);
+					const reachable = directPairingTargets(port);
+					const primary: PairingTarget = reachable[0] ?? {
+						transport: "direct",
+						url: hosted.url,
+						label: "Workstation",
+					};
 					const link = buildPairingLink(
-						{ transport: "direct", url: hosted.url, label: "Workstation" },
-						"",
+						primary,
+						hosted.clientToken,
 						role,
 						bridge.agentId,
 						bridge.info.name,
 					);
-					const minutes = Math.round((hosted.expiresAt - Date.now()) / 60000);
-					const roleLabel = role === "viewer" ? "Viewer, read-only" : "Control";
-					// The host reports the address it picked, which is loopback when
-					// it bound loopback. Offer the reachable interfaces too, since a
-					// phone cannot dial 127.0.0.1.
-					const port = Number(new URL(hosted.url.replace(/^ws:/, "http:")).port);
-					const reachable = directPairingTargets(port);
 					const lines = [
 						`${roleLabel} pairing for ${bridge.agentId}`,
 						"",
 						"This session is served by another one on this machine, so",
 						"pair against the shared address and pick it in the app:",
 						"",
-						`    Address:  ${(reachable[0]?.url ?? hosted.url).replace(/^ws:\/\//, "")}`,
+						`    Address:  ${primary.url.replace(/^ws:\/\//, "")}`,
 						`    Code:     ${hosted.code}`,
 						"",
 						`The code works once and expires in ${minutes} minutes.`,

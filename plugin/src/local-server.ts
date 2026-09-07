@@ -316,6 +316,10 @@ export class LocalServer {
 				expiresAt: issued.expiresAt,
 				url: `ws://${this.pairingHost()}:${this.port}`,
 				role,
+				// The client token for that role, so a guest can print a QR that
+				// works the same as the host's rather than one that cannot
+				// authenticate. Loopback only, like the rest of this endpoint.
+				clientToken: role === "control" ? this.tokens.control : this.tokens.viewer,
 			});
 		}
 

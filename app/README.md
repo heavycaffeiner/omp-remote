@@ -64,21 +64,14 @@ Scanning the code (or tapping the link on the same device) fills in the
 relay/direct URL, the token, the role, and the agent id automatically, and
 you confirm and save before connecting.
 
-To enter a connection by hand instead, use "Enter manually" and provide:
+If the camera cannot read the code, "Paste a link" takes the same
+`remote-omp://pair?...` string typed or pasted by hand. It carries the URL,
+the token, the role, and the session, so one paste is the whole connection.
+The role in the link is only a hint; the authoritative role is whatever the
+server reports in its `welcome` frame, and the UI defers to that.
 
-- **Relay or direct URL**: a `ws://` or `wss://` address. For a relay
-  deployment this is the relay's base URL (e.g. `wss://relay.example.com`);
-  the app appends `/client` itself. For a direct connection to the plugin's
-  own local server, this is `ws://<host>:8788` (default port from the
-  plugin), reachable over LAN or Tailscale.
-- **Client token**: the control or viewer token for that deployment. This
-  field is obscured; the app never displays a token in plain text or logs
-  it.
-- **Role**: control (can send prompts, answer requests, change settings) or
-  viewer (read-only spectator). The role shown here is only a hint for a
-  manually entered connection; the authoritative role is whatever the
-  server reports back in its `welcome` frame, and the UI always defers to
-  that.
+When neither is possible, "Enter a code" takes the workstation address and
+the six-character code printed alongside the QR.
 
 Multiple connections can be saved and switched between from the connection
 screen.

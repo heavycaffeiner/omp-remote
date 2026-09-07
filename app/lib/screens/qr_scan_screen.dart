@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 /// Scans a pairing QR code. Camera permission denial is handled with a text
-/// explanation and a manual-entry fallback (the caller's manual form).
+/// explanation and a fallback to pasting the link the code encodes.
 class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key});
 
@@ -99,7 +99,7 @@ class _PermissionFallback extends StatelessWidget {
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 16),
             const Text(
-              'Use "Enter manually" on the previous screen instead.',
+              'Use "Paste a link" on the previous screen instead.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
