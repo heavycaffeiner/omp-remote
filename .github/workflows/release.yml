@@ -127,6 +127,7 @@ jobs:
           dart run tool/generate_notification_icon.dart
           test -f android/app/src/main/res/drawable-xxxhdpi/ic_notification.png
           test -f android/app/src/main/res/drawable-mdpi/ic_notification.png
+          test -f android/app/src/main/res/raw/keep.xml
       - run: flutter build apk --release
         working-directory: app
 
@@ -138,6 +139,20 @@ jobs:
           "$APKSIGNER" verify --print-certs "$APK"
           "$APKSIGNER" verify --print-certs "$APK" | grep -qi 'CN=' \
             || { echo "::error::APK has no signing certificate" >&2; exit 1; }
+
+      # The resource shrinker has stripped this icon before, which only shows
+      # up as a blank notification on a real device. aapt2 lists what actually
+      # survived into the built APK.
+      - name: Verify the icons survived resource shrinking
+        working-directory: app
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -1)
+          "$AAPT2" dump resources "$APK" > /tmp/res.txt
+          grep -q 'drawable/ic_notification' /tmp/res.txt \
+            || { echo "::error::ic_notification was stripped from the APK" >&2; exit 1; }
+          grep -q 'mipmap/ic_launcher' /tmp/res.txt \
+            || { echo "::error::ic_launcher is missing from the APK" >&2; exit 1; }
 
       - name: Name the artifact after the tag
         run: |

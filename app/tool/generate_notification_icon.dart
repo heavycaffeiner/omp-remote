@@ -122,5 +122,17 @@ void main() {
     File('${directory.path}/ic_notification.png')
         .writeAsBytesSync(encodePng(_render(entry.value)));
   }
-  stdout.writeln('wrote ic_notification.png in ${_buckets.length} density buckets');
+
+  // The icon is named as a Dart string, so the release build's resource
+  // shrinker finds no reference to it and strips it, leaving notifications
+  // with a blank icon. This tells it to keep the drawable.
+  final rawDir = Directory('android/app/src/main/res/raw');
+  rawDir.createSync(recursive: true);
+  File('${rawDir.path}/keep.xml').writeAsStringSync(
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<resources xmlns:tools="http://schemas.android.com/tools"\n'
+    '    tools:keep="@drawable/ic_notification" />\n',
+  );
+
+  stdout.writeln('wrote ic_notification.png in ${_buckets.length} density buckets, plus res/raw/keep.xml');
 }
