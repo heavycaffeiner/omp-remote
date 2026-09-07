@@ -87,12 +87,21 @@ protection the OS gives app-private storage, is never logged, and is never
 rendered in the UI except as a redacted placeholder. Anyone with the
 unlocked device can reach it.
 
-## Known environment limitation
+## What the session screen shows
 
-This app has not been run on a device or simulator. The machine it was
-built on has no Android SDK (`flutter doctor` reports the toolchain as
-missing) and iOS requires macOS with Xcode, which was not available.
-`flutter analyze` and `flutter test` both pass there, but neither is a
-substitute for seeing the UI: the screens have never been rendered on a
-real screen. Install the Android SDK, or build on macOS for iOS, and run
-it before trusting the layout.
+The transcript is a log, not a chat: one left edge with a gutter naming who
+produced each line. A tool call is one card carrying its own result, so a
+result never repeats below it, and a call that changed a file shows that
+file's diff inline with line numbers and per-line markers.
+
+Message text, thinking, notices, and interactive request bodies are rendered
+as markdown. Blocks the harness wraps in a tag (`<system-reminder>`,
+`<advisory>`, and anything else) are pulled out of the prose and shown as
+labelled callouts rather than as stray markup.
+
+Above the transcript: the agent's todo list while it has one, updated as the
+list changes rather than at turn boundaries, and one row per spawned subagent
+with its status, current tool, and token count.
+
+Below it: messages waiting for the agent to finish. A prompt sent mid-turn is
+held rather than delivered, so it can be rewritten or dropped before it runs.

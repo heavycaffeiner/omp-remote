@@ -210,18 +210,18 @@ Known, and unlikely to change without upstream API work.
 
 - **Slash commands cannot be run remotely.** The extension API exposes no way
   to invoke one, and submitting `/name` as a prompt sends it to the model as
-  text instead of running it. The app lists commands for reference only.
-- **The command list is partial.** It covers extension, prompt, and skill
-  commands. Built-ins like `/rename` and `/model` are not enumerated.
+  text instead of running it. `commands` lists every command the session
+  knows, marking which ones the app can do the same work for itself.
 - **Some settings are unreachable.** `set_fast_mode`, `set_steering_mode`,
   `set_follow_up_mode`, `set_interrupt_mode`, `cycle_model`, `stats`,
-  `set_todos`, `set_auto_compaction`, `new_session`, `switch_session`, and
-  `branch` live on a session object extensions never receive. Each fails with
-  an explicit error rather than pretending to work.
+  `new_session`, `switch_session`, and `branch` live on a session object
+  extensions never receive. Each fails with an explicit error rather than
+  pretending to work.
 - **Prompts from other extensions are not forwarded.** Only this plugin's own
   tools, the shadowed `ask`, and tool denials reach your phone.
-- **The app has not been run on a device by its authors.** It analyzes clean
-  and its tests pass, but the layout is unverified on real hardware.
+- **Pickers cannot be opened remotely.** A slash command that opens a picker
+  on the workstation has no remote invocation path, so the app renders its
+  own surface for the ones whose work is reachable and says which they are.
 
 ## Development
 

@@ -362,6 +362,7 @@ fields are omitted, never guessed.
   "streaming": false,
   "compacting": false,
   "queued": 0,
+  "queue": [{ "id": "q1", "text": "held until the agent settles", "createdAt": 1788546521000 }],
   "fastMode": { "enabled": false, "active": false },
   "autoCompaction": true,
   "steeringMode": "one-at-a-time",
@@ -390,8 +391,8 @@ internals. Every event is `{ "k": <kind>, ... }`.
 | `message`          | `role`, `text`, `thinking`               | `message_end`                   |
 | `tool_start`       | `id`, `name`, `input`                    | `tool_execution_start`          |
 | `tool_update`      | `id`, `text`                             | `tool_execution_update`         |
-| `tool_end`         | `id`, `name`, `ok`, `text`               | `tool_execution_end`            |
-| `todos`            | `todos`                                  | todo state change               |
+| `tool_end`         | `id`, `name`, `ok`, `text`, `path?`, `diff?`, `sourcePath?` | `tool_execution_end` |
+| `todos`            | `todos`                                  | the todo tool's own result      |
 | `notice`           | `level`, `text`                          | `notice`, UI notifications      |
 | `status`           | `key`, `text`                            | `setStatus` from an extension   |
 | `model_changed`    | `model`                                  | `model_changed`                 |
@@ -399,12 +400,30 @@ internals. Every event is `{ "k": <kind>, ... }`.
 | `compaction`       | `phase`                                  | auto-compaction start and end   |
 | `retry`            | `phase`, `text`                          | auto-retry start and end        |
 | `session_changed`  | `reason`, `sessionId`, `sessionName`     | start, switch, branch, tree     |
-| `subagent`         | `id`, `name`, `phase`, `text`            | subagent lifecycle and progress |
+| `subagent`         | `id`, `name`, `phase`, `text`, `agentType?`, `tool?`, `toolCount?`, `tokens?`, `durationMs?` | `task:subagent:*` frames |
 | `bash_output`      | `id`, `text`                             | output of a client `bash` command |
 
-`input` is truncated to 4 KiB and every `text` field to 16 KiB before it leaves
-the plugin, so a large payload cannot blow the frame budget. Truncated values
-end with `...` and the untruncated length is not reported.
+`input` is truncated to 4 KiB, `diff` to 64 KiB, and every `text` field to
+16 KiB before it leaves the plugin, so a large payload cannot blow the frame
+budget. Truncated values end with `...` and the untruncated length is not
+reported.
+
+A `tool_end` for a call that changed one file carries that file's `path` and a
+unified `diff`. The edit tool produces the diff itself; a `write` reports
+neither, so the plugin holds its arguments from call start and renders the
+content as all additions against the path the write resolved to.
+
+A `subagent` event is one agent's current state, not an append-only log: a
+later frame for the same `id` replaces the earlier one. `phase` is `pending`,
+`running`, `completed`, `failed`, or `aborted`.
+
+A session that was resumed, switched, branched, or moved in the tree emits no
+events for the transcript already on disk. The plugin replays that branch into
+the event stream instead, so a client that attaches sees the conversation
+rather than an empty screen. The replay is capped at the newest 400 entries,
+just under the retained ring, and a `session_changed` with a reason other
+than `start` means the client should clear what it has before applying what
+follows.
 
 ## Interactive requests
 
@@ -520,22 +539,43 @@ Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 | `compact`         | `{ instructions? }`       | `{ compacted: true }`        |
 | `set_session_name`| `{ name }`                | `{ sessionName }`            |
 
+### The prompt queue
+
+A plain `prompt` sent while the agent is streaming is held by the plugin
+rather than handed to the agent, which offers no queue to read back or edit.
+It appears in `state.queue` and is sent, one per idle point, when the agent
+settles. `steer`, `follow_up`, and `aside` are interruptions by definition
+and always go straight through.
+
+| `cmd`          | `args`             | Reply `data`        |
+| -------------- | ------------------ | ------------------- |
+| `queue_edit`   | `{ id, text }`     | `{ id, text }`      |
+| `queue_remove` | `{ id }`           | `{ id }`            |
+| `queue_clear`  | `{}`               | `{ removed }`       |
+
+Editing or removing a message that has already been sent fails: the id is no
+longer in the queue.
+
 ### Running things
 
 | `cmd`         | `args`                | Reply `data`                     |
 | ------------- | --------------------- | -------------------------------- |
 | `bash`        | `{ command }`         | `{ id }`, output as `bash_output` events |
 | `abort_bash`  | `{ id }`              | `{ aborted: true }`              |
+| `jobs`        | `{}`                  | `{ running, recent }`            |
 
 There is no command that invokes a slash command remotely. The extension API
 exposes no method to execute one, and submitting `/name` through the prompt
 path was tested and does not work: it reaches the model as literal text
-instead of being expanded. Running one is a workstation action.
+instead of being expanded.
 
-`commands` returns a subset, not an inventory: the extension API lists only
-extension, prompt, and skill commands, so built-ins the session really has
-(`/rename`, `/model`, `/compact`) do not appear. A client MUST present the
-result as a reference list and MUST NOT imply it is everything available.
+`commands` returns every slash command the session knows: built-ins from the
+builtin registry plus the extension, prompt, and skill commands the extension
+API reports. Each entry carries a `source` and, when the plugin can do the
+same work from here, a `remote` naming the wire command that does it. An
+entry without `remote` is a workstation action: the surfaces those commands
+drive (`AgentSession`, `Settings`, `ExtensionCommandContext`) are not
+reachable from an extension.
 
 `bash` is a remote shell on the workstation. It runs only for a `control`
 connection and is refused when the plugin is started with
