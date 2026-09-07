@@ -289,7 +289,7 @@ class _ContextUsageBar extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xs),
           ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.sm),
+            borderRadius: BorderRadius.circular(AppRadius.small),
             child: LinearProgressIndicator(
               value: fraction,
               minHeight: 6,

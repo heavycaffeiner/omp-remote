@@ -7,11 +7,18 @@
 import * as os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import {
+	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
+	TASK_SUBAGENT_PROGRESS_CHANNEL,
+} from "@oh-my-pi/pi-coding-agent/task/types";
+import {
 	buildAutoCompactionEvent,
 	buildAutoRetryEndEvent,
 	buildAutoRetryStartEvent,
+	buildHistoryEvents,
 	buildMessageEvent,
 	buildToolEndEvent,
+	buildSubagentLifecycleEvent,
+	buildSubagentProgressEvent,
 	modelToRef,
 	safeStringifyInput,
 	truncateText,
@@ -26,6 +33,7 @@ import type {
 	CoreState,
 	InteractiveRequest,
 	PendingRequestSummary,
+	QueuedMessage,
 	RemoteEvent,
 	RequestAnswer,
 	RequestCancelReason,
@@ -52,6 +60,10 @@ function nextRequestId(): string {
 	requestCounter += 1;
 	return `req-${requestCounter}`;
 }
+
+// The retained ring holds 512 events; replaying more only evicts the older
+// half of the same replay, so cap it just under.
+const HISTORY_REPLAY_MAX = 400;
 
 // Validates a RequestAnswer against the shape its request kind requires.
 // Returns the narrowed answer or undefined when the shape does not match.
@@ -83,6 +95,13 @@ export class SessionBridge {
 	private latestCtx: ExtensionContext | undefined;
 	private readonly viewers: ViewerCounts = { control: 0, viewer: 0 };
 	private compacting = false;
+	private historyReplayPending = false;
+
+	/// True once a transcript has been replayed, so a late subscriber does not
+	/// trigger a second pass over the same branch.
+	historyReplayed = false;
+	private readonly queue: QueuedMessage[] = [];
+	private queueSeq = 0;
 	private readonly connectedAt = Date.now();
 	private readonly bashProcesses = new Map<string, AbortController>();
 	private eventsSent = 0;
@@ -200,6 +219,7 @@ export class SessionBridge {
 		if (thinkingLevel !== undefined) snapshot.thinkingLevel = thinkingLevel;
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;
+		if (this.queue.length > 0) snapshot.queue = this.queue.map((q) => ({ ...q }));
 		return snapshot;
 	}
 
@@ -292,14 +312,136 @@ export class SessionBridge {
 	}
 
 	// -------------------------------------------------------------------
+	// Prompt queue
+	// -------------------------------------------------------------------
+
+	// Handing a prompt straight to the agent while it is streaming makes it
+	// invisible and unchangeable: the agent exposes no queue to read or edit.
+	// Holding it here instead keeps it on the wire state until the turn ends.
+	enqueuePrompt(text: string): QueuedMessage {
+		this.queueSeq += 1;
+		const entry: QueuedMessage = {
+			id: `q${this.queueSeq}`,
+			text,
+			createdAt: Date.now(),
+		};
+		this.queue.push(entry);
+		this.emitState();
+		return entry;
+	}
+
+	editQueued(id: string, text: string): boolean {
+		const entry = this.queue.find((q) => q.id === id);
+		if (!entry) return false;
+		entry.text = text;
+		this.emitState();
+		return true;
+	}
+
+	removeQueued(id: string): boolean {
+		const index = this.queue.findIndex((q) => q.id === id);
+		if (index < 0) return false;
+		this.queue.splice(index, 1);
+		this.emitState();
+		return true;
+	}
+
+	clearQueue(): number {
+		const count = this.queue.length;
+		this.queue.length = 0;
+		if (count > 0) this.emitState();
+		return count;
+	}
+
+	get queuedMessages(): readonly QueuedMessage[] {
+		return this.queue;
+	}
+
+	// Sends the head of the queue once the agent is idle. One per idle point:
+	// the next `agent_end` drains the following entry, so each prompt gets its
+	// own turn instead of being concatenated.
+	flushQueue(): void {
+		const ctx = this.latestCtx;
+		if (!ctx || this.queue.length === 0) return;
+		if (!ctx.isIdle()) return;
+		const next = this.queue.shift();
+		if (!next) return;
+		this.emitState();
+		this.pi.sendUserMessage(next.text);
+	}
+
+	// -------------------------------------------------------------------
+	// History replay
+	// -------------------------------------------------------------------
+
+	// A resumed or switched-to session has a transcript on disk but emits no
+	// events for it, so a client attaching to one would see nothing. Replaying
+	// the persisted branch into the event stream puts that history in the
+	// retained buffer, which is what every subscriber reads from.
+	//
+	// Deferred by a turn of the event loop: at `session_start` a resumed
+	// session's branch is still empty, so reading it there yields nothing.
+	scheduleHistoryReplay(ctx: ExtensionContext): void {
+		if (this.historyReplayPending) return;
+		this.historyReplayPending = true;
+		ctx.setTimeout(() => {
+			this.historyReplayPending = false;
+			this.replayHistory(ctx);
+		}, 0);
+	}
+
+	// Replays whatever the branch holds now. Safe to call more than once: a
+	// second call re-sends the same transcript, which a client applies as a
+	// duplicate seq and drops.
+	replayHistory(ctx: ExtensionContext): void {
+		let entries: readonly unknown[];
+		try {
+			entries = ctx.sessionManager.getBranch();
+		} catch {
+			return;
+		}
+		const events = buildHistoryEvents(entries);
+		if (events.length === 0) return;
+		this.historyReplayed = true;
+		// The ring keeps the newest window, so replaying more than it holds
+		// only evicts the oldest of them. Trim up front to keep the seq range
+		// tight and skip work that would be dropped anyway.
+		const start = Math.max(0, events.length - HISTORY_REPLAY_MAX);
+		for (let i = start; i < events.length; i++) {
+			this.broadcastEvent(events[i] as RemoteEvent);
+		}
+	}
+
+	// -------------------------------------------------------------------
+	// Subagent observability
+	// -------------------------------------------------------------------
+
+	// Spawned agents run in their own sessions, so none of their work reaches
+	// the parent's `pi.on` events. The task tool republishes lifecycle and
+	// coalesced progress frames on the session bus; forwarding them is what
+	// lets a client watch a fan-out from inside the parent session.
+	private registerSubagentWatch(): void {
+		this.pi.events.on(TASK_SUBAGENT_LIFECYCLE_CHANNEL, (data) => {
+			const event = buildSubagentLifecycleEvent(data);
+			if (event) this.broadcastEvent(event);
+		});
+		this.pi.events.on(TASK_SUBAGENT_PROGRESS_CHANNEL, (data) => {
+			const event = buildSubagentProgressEvent(data);
+			if (event) this.broadcastEvent(event);
+		});
+	}
+
+	// -------------------------------------------------------------------
 	// pi.on(...) wiring. Called once from the extension factory.
 	// -------------------------------------------------------------------
 
 	registerHandlers(): void {
 		const pi = this.pi;
+		this.registerSubagentWatch();
 
 		pi.on("session_start", async (_event, ctx) => {
 			this.updateCtx(ctx);
+			this.scheduleHistoryReplay(ctx);
 			this.emitState();
 		});
 
@@ -311,6 +453,9 @@ export class SessionBridge {
 			this.updateCtx(ctx);
 			this.broadcastEvent({ k: "agent_end", terminal: !event.willContinue });
 			this.emitState();
+			// A held prompt gets its own turn, so drain one per idle point
+			// rather than concatenating the queue into a single message.
+			if (!event.willContinue) ctx.setTimeout(() => this.flushQueue(), 0);
 		});
 		pi.on("turn_start", async (_event, ctx) => {
 			this.updateCtx(ctx);
@@ -398,6 +543,7 @@ export class SessionBridge {
 					? { sessionName: ctx.sessionManager.getSessionName() as string }
 					: {}),
 			});
+			this.scheduleHistoryReplay(ctx);
 			this.emitState();
 		});
 		pi.on("session_branch", async (_event, ctx) => {
@@ -407,6 +553,7 @@ export class SessionBridge {
 				reason: "branch",
 				sessionId: ctx.sessionManager.getSessionId(),
 			});
+			this.scheduleHistoryReplay(ctx);
 			this.emitState();
 		});
 		pi.on("session_tree", async (_event, ctx) => {
@@ -416,6 +563,7 @@ export class SessionBridge {
 				reason: "tree",
 				sessionId: ctx.sessionManager.getSessionId(),
 			});
+			this.scheduleHistoryReplay(ctx);
 			this.emitState();
 		});
 

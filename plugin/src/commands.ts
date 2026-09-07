@@ -7,6 +7,7 @@
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
+import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
@@ -153,6 +154,13 @@ async function dispatch(
 		case "abort_bash":
 			return cmdAbortBash(bridge, args);
 
+		case "queue_edit":
+			return cmdQueueEdit(bridge, args);
+		case "queue_remove":
+			return cmdQueueRemove(bridge, args);
+		case "queue_clear":
+			return ok({ removed: bridge.clearQueue() });
+
 		// Verified gaps: AgentSession-only surface not reachable from an
 		// extension (see docs/protocol.md's Known API gaps), or no invocation
 		// path at all for run_command. Each fails explicitly and precisely.
@@ -224,6 +232,16 @@ function cmdPrompt(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): Comm
 
 	const ctxResult = requireCtx(bridge);
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
+	const ctx = ctxResult;
+
+	// A plain prompt sent mid-turn is held by the plugin rather than handed
+	// to the agent, which offers no queue to read back or edit. The explicit
+	// delivery modes are interruptions by definition, so they go straight
+	// through.
+	if (deliverAs === undefined && !ctx.isIdle()) {
+		const entry = bridge.enqueuePrompt(text);
+		return ok({ accepted: true, queuedId: entry.id });
+	}
 
 	pi.sendUserMessage(text, deliverAs !== undefined ? { deliverAs } : undefined);
 	return ok({ accepted: true });
@@ -260,6 +278,26 @@ function cmdAbort(bridge: SessionBridge): CommandResult {
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 	ctxResult.abort();
 	return ok({ aborted: true });
+}
+
+function cmdQueueEdit(bridge: SessionBridge, args: unknown): CommandResult {
+	const record = asRecord(args);
+	if (!record) return fail('"args" must be an object with "id" and "text" fields');
+	const id = requireString(record, "id");
+	if (isErrorResult(id)) return fail(id.error);
+	const text = requireString(record, "text");
+	if (isErrorResult(text)) return fail(text.error);
+	if (!bridge.editQueued(id, text)) return fail(`no queued message with id ${id}`);
+	return ok({ id, text });
+}
+
+function cmdQueueRemove(bridge: SessionBridge, args: unknown): CommandResult {
+	const record = asRecord(args);
+	if (!record) return fail('"args" must be an object with an "id" field');
+	const id = requireString(record, "id");
+	if (isErrorResult(id)) return fail(id.error);
+	if (!bridge.removeQueued(id)) return fail(`no queued message with id ${id}`);
+	return ok({ id });
 }
 
 // -----------------------------------------------------------------------
@@ -339,8 +377,31 @@ function cmdTools(pi: ExtensionAPI): CommandResult {
 	return ok({ active: pi.getActiveTools(), all: pi.getAllTools().map((t) => t.name) });
 }
 
+// `pi.getCommands()` deliberately omits builtins: it exists so an extension
+// can discover the dynamic commands it did not register, and each frontend
+// prepends its own builtin list. The app is such a frontend, so it needs
+// both or its palette shows only extension, prompt, and skill commands.
 function cmdCommands(pi: ExtensionAPI): CommandResult {
-	return ok({ commands: pi.getCommands().map((c) => c.name) });
+	const seen = new Set<string>();
+	const commands: Array<{ name: string; description?: string; source: string }> = [];
+
+	for (const builtin of BUILTIN_SLASH_COMMAND_DEFS) {
+		if (seen.has(builtin.name)) continue;
+		seen.add(builtin.name);
+		commands.push({ name: builtin.name, description: builtin.description, source: "builtin" });
+	}
+	for (const dynamic of pi.getCommands()) {
+		if (seen.has(dynamic.name)) continue;
+		seen.add(dynamic.name);
+		commands.push({
+			name: dynamic.name,
+			...(dynamic.description !== undefined ? { description: dynamic.description } : {}),
+			source: dynamic.source,
+		});
+	}
+
+	commands.sort((a, b) => a.name.localeCompare(b.name));
+	return ok({ commands });
 }
 
 function cmdModels(bridge: SessionBridge): CommandResult {

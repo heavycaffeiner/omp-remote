@@ -86,6 +86,20 @@ class SessionStore extends ChangeNotifier {
   List<PendingRequestState> get pendingRequests =>
       List.unmodifiable(_pendingRequests);
 
+  /// Live subagents keyed by id, in the order they first appeared. Progress
+  /// frames arrive continuously, so the latest state per agent replaces the
+  /// previous one instead of appending another transcript line.
+  final Map<String, SubagentEvent> _subagents = {};
+  List<SubagentEvent> get subagents => List.unmodifiable(_subagents.values);
+  bool get hasActiveSubagents =>
+      _subagents.values.any((a) => !a.isTerminal);
+
+  /// Live todo list. Seeded from `state.todos` and replaced by every
+  /// `todos` event, so the panel tracks edits without waiting for a turn
+  /// to end.
+  List<TodoItem> _todos = const [];
+  List<TodoItem> get todos => _todos;
+
   LateAnswerError? lastLateAnswerError;
 
   int _lastAppliedSeq = 0;
@@ -97,6 +111,7 @@ class SessionStore extends ChangeNotifier {
 
   void clearTranscript() {
     _entries.clear();
+    _subagents.clear();
     _openToolBlockId = null;
     _hasOpenTextBlock = false;
     transcriptRevision.value++;
@@ -129,6 +144,8 @@ class SessionStore extends ChangeNotifier {
         _applyEvent(frame.event);
       case StateFrame():
         _state = frame.state;
+        final stateTodos = frame.state.todos;
+        if (stateTodos != null) _todos = stateTodos;
         final incoming = frame.state.pendingRequests;
         if (incoming != null) {
           _pendingRequests
@@ -214,13 +231,30 @@ class SessionStore extends ChangeNotifier {
         entry.thinking += event.text;
         entry.touch();
       case MessageEvent():
+        // A toolResult message repeats what the tool card already shows, and
+        // an assistant message that only carried a tool call has no prose at
+        // all. Rendering either produces a stray empty block.
+        if (event.role == 'toolResult') {
+          _hasOpenTextBlock = false;
+          return;
+        }
+        final hasContent =
+            event.text.trim().isNotEmpty ||
+            (event.thinking?.trim().isNotEmpty ?? false);
         final existing = _findOpenTextEntry();
         if (existing != null) {
+          if (!hasContent) {
+            _entries.remove(existing);
+            _hasOpenTextBlock = false;
+            transcriptRevision.value++;
+            notifyListeners();
+            return;
+          }
           existing.text = event.text;
           existing.thinking = event.thinking ?? existing.thinking;
           existing.open = false;
           existing.touch();
-        } else {
+        } else if (hasContent) {
           _appendEntry(
             TranscriptEntry(
               id: 'msg-${_entries.length}-${DateTime.now().microsecondsSinceEpoch}',
@@ -288,14 +322,8 @@ class SessionStore extends ChangeNotifier {
           ),
         );
       case SubagentEvent():
-        _appendEntry(
-          TranscriptEntry(
-            id: 'subagent-${event.id}-${_entries.length}',
-            kind: TranscriptKind.status,
-            text:
-                '${event.name}: ${event.phase}${event.text != null ? ' - ${event.text}' : ''}',
-          ),
-        );
+        _subagents[event.id] = event;
+        notifyListeners();
       case RetryEvent():
         _appendEntry(
           TranscriptEntry(
@@ -314,6 +342,12 @@ class SessionStore extends ChangeNotifier {
           ),
         );
       case SessionChangedEvent():
+        // A switch, branch, or tree move replaces the conversation, and the
+        // agent replays the new one right after. Keeping the old entries
+        // would interleave two transcripts.
+        if (event.reason != 'start') {
+          clearTranscript();
+        }
         _appendEntry(
           TranscriptEntry(
             id: 'session-${_entries.length}-${DateTime.now().microsecondsSinceEpoch}',
@@ -353,9 +387,10 @@ class SessionStore extends ChangeNotifier {
           );
         }
       case TodosEvent():
-        // Todos are surfaced through state.todos in the header; no
-        // transcript entry needed to avoid duplicating the same list.
-        break;
+        // The event is the live source: `state.todos` only refreshes at a
+        // turn boundary, and the list must track edits as they happen.
+        _todos = event.todos;
+        notifyListeners();
       case AgentStartEvent():
       case AgentEndEvent():
       case TurnStartEvent():

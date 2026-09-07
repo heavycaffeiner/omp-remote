@@ -11,6 +11,9 @@ import '../session_store.dart';
 import '../theme.dart';
 import '../widgets/interactive_request_card.dart';
 import '../widgets/state_header.dart';
+import '../widgets/subagent_panel.dart';
+import '../widgets/queue_panel.dart';
+import '../widgets/todo_panel.dart';
 import '../widgets/transcript_view.dart';
 import 'command_palette_screen.dart';
 import 'session_menu_sheet.dart';
@@ -238,6 +241,25 @@ class _SessionScreenState extends State<SessionScreen>
     );
   }
 
+  Future<void> _runQueueCommand(CommandName cmd, Map<String, Object?> args) async {
+    try {
+      await widget.relayClient.sendCommand(cmd, args: args);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Queue change refused: $e')),
+      );
+    }
+  }
+
+  void _editQueued(String id, String text) {
+    unawaited(_runQueueCommand(CommandName.queueEdit, {'id': id, 'text': text}));
+  }
+
+  void _removeQueued(String id) {
+    unawaited(_runQueueCommand(CommandName.queueRemove, {'id': id}));
+  }
+
   @override
   Widget build(BuildContext context) {
     final streaming = _sessionStore.state?.streaming ?? false;
@@ -291,7 +313,15 @@ class _SessionScreenState extends State<SessionScreen>
                 onAnswer: (response) =>
                     _sessionStore.answerRequest(pending.last.id, response),
               ),
+            if (_sessionStore.subagents.isNotEmpty)
+              SubagentPanel(subagents: _sessionStore.subagents),
+            TodoPanel(todos: _sessionStore.todos),
             Expanded(child: TranscriptView(sessionStore: _sessionStore)),
+            QueuePanel(
+              queue: _sessionStore.state?.queue ?? const [],
+              onEdit: _editQueued,
+              onRemove: _removeQueued,
+            ),
             _buildComposer(context, streaming),
           ],
         ),

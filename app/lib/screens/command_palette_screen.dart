@@ -53,11 +53,14 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filter.isEmpty
+    final query = _filter.trim().toLowerCase();
+    final filtered = query.isEmpty
         ? _commands
         : _commands
               .where(
-                (c) => c.name.toLowerCase().contains(_filter.toLowerCase()),
+                (c) =>
+                    c.name.toLowerCase().contains(query) ||
+                    (c.description?.toLowerCase().contains(query) ?? false),
               )
               .toList();
 
@@ -76,10 +79,9 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
               child: Semantics(
                 liveRegion: true,
                 child: Text(
-                  'Extension, prompt, and skill commands from this session. '
-                  'Built-ins such as /rename and /model are not listed here. '
-                  'The app cannot run any of them: type it at the workstation '
-                  'keyboard.',
+                  'Every slash command this session knows: built-ins plus '
+                  'extension, prompt, and skill commands. The app cannot run '
+                  'any of them: type it at the workstation keyboard.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),
@@ -131,15 +133,27 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
                         itemCount: filtered.length,
                         itemBuilder: (context, index) {
                           final command = filtered[index];
+                          final label = command.description != null
+                              ? '/${command.name}, ${command.description}'
+                              : '/${command.name}';
                           return Semantics(
                             label:
-                                '/${command.name}${command.description != null ? ', ${command.description}' : ''}. Run this at the workstation, not from the app.',
+                                '$label. From ${command.source}. Run this at the workstation, not from the app.',
                             child: ListTile(
-                              leading: const Icon(Icons.terminal),
+                              leading: Icon(_iconFor(command.source)),
                               title: Text('/${command.name}'),
                               subtitle: command.description != null
                                   ? Text(command.description!)
                                   : null,
+                              trailing: Text(
+                                command.source,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
                             ),
                           );
                         },
@@ -151,3 +165,11 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
     );
   }
 }
+
+IconData _iconFor(String source) => switch (source) {
+  'builtin' => Icons.terminal,
+  'extension' => Icons.extension_outlined,
+  'prompt' => Icons.description_outlined,
+  'skill' => Icons.auto_awesome_outlined,
+  _ => Icons.chevron_right,
+};

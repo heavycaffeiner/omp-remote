@@ -384,6 +384,41 @@ class PendingRequest {
 // State snapshot
 // ---------------------------------------------------------------------------
 
+/// A message the plugin holds until the agent is idle. It has not reached the
+/// model, so it can still be rewritten or dropped.
+class QueuedMessage {
+  const QueuedMessage({
+    required this.id,
+    required this.text,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String text;
+  final int createdAt;
+
+  static QueuedMessage? fromJson(Object? json) {
+    final map = asMap(json);
+    final id = asString(map['id']);
+    final text = asString(map['text']);
+    if (id == null || id.isEmpty || text == null) return null;
+    return QueuedMessage(
+      id: id,
+      text: text,
+      createdAt: asInt(map['createdAt']) ?? 0,
+    );
+  }
+
+  static List<QueuedMessage> listFromJson(Object? json) {
+    final result = <QueuedMessage>[];
+    for (final entry in asList(json)) {
+      final message = QueuedMessage.fromJson(entry);
+      if (message != null) result.add(message);
+    }
+    return result;
+  }
+}
+
 class StateSnapshot {
   const StateSnapshot({
     this.sessionId,
@@ -395,6 +430,7 @@ class StateSnapshot {
     required this.streaming,
     required this.compacting,
     required this.queued,
+    this.queue = const [],
     this.fastMode,
     this.autoCompaction,
     this.steeringMode,
@@ -415,6 +451,10 @@ class StateSnapshot {
   final bool streaming;
   final bool compacting;
   final int queued;
+
+  /// Messages the plugin is holding until the agent goes idle. Still
+  /// editable: none of them has reached the model.
+  final List<QueuedMessage> queue;
   final FastModeInfo? fastMode;
   final bool? autoCompaction;
   final String? steeringMode;
@@ -437,6 +477,7 @@ class StateSnapshot {
       streaming: asBool(map['streaming']) ?? false,
       compacting: asBool(map['compacting']) ?? false,
       queued: asInt(map['queued']) ?? 0,
+      queue: QueuedMessage.listFromJson(map['queue']),
       fastMode: FastModeInfo.fromJson(map['fastMode']),
       autoCompaction: asBool(map['autoCompaction']),
       steeringMode: asString(map['steeringMode']),
@@ -540,6 +581,11 @@ sealed class SessionEvent {
           name: asString(map['name']) ?? '',
           phase: asString(map['phase']) ?? '',
           text: asString(map['text']),
+          agentType: asString(map['agentType']),
+          tool: asString(map['tool']),
+          toolCount: asInt(map['toolCount']),
+          tokens: asInt(map['tokens']),
+          durationMs: asInt(map['durationMs']),
         );
       case 'bash_output':
         return BashOutputEvent(
@@ -667,11 +713,29 @@ class SubagentEvent extends SessionEvent {
     required this.name,
     required this.phase,
     this.text,
+    this.agentType,
+    this.tool,
+    this.toolCount,
+    this.tokens,
+    this.durationMs,
   });
   final String id;
   final String name;
+
+  /// Lifecycle or progress status: `started`, `running`, `completed`,
+  /// `failed`, or `aborted`.
   final String phase;
+
+  /// What the agent last said it was doing, or its assignment.
   final String? text;
+  final String? agentType;
+  final String? tool;
+  final int? toolCount;
+  final int? tokens;
+  final int? durationMs;
+
+  bool get isTerminal =>
+      phase == 'completed' || phase == 'failed' || phase == 'aborted';
 }
 
 class BashOutputEvent extends SessionEvent {
@@ -719,6 +783,9 @@ enum CommandName {
   setSessionName,
   bash,
   abortBash,
+  queueEdit,
+  queueRemove,
+  queueClear,
 }
 
 extension CommandNameWire on CommandName {
@@ -782,6 +849,12 @@ extension CommandNameWire on CommandName {
         return 'bash';
       case CommandName.abortBash:
         return 'abort_bash';
+      case CommandName.queueEdit:
+        return 'queue_edit';
+      case CommandName.queueRemove:
+        return 'queue_remove';
+      case CommandName.queueClear:
+        return 'queue_clear';
     }
   }
 }
@@ -807,18 +880,26 @@ class CommandReply {
 }
 
 class SlashCommandInfo {
-  const SlashCommandInfo({required this.name, this.description});
+  const SlashCommandInfo({
+    required this.name,
+    required this.source,
+    this.description,
+  });
 
   final String name;
+
+  /// Where the command comes from: `builtin`, `extension`, `prompt`, or
+  /// `skill`. Shown so a long list is scannable by origin.
+  final String source;
   final String? description;
 
   static SlashCommandInfo? fromJson(Object? json) {
-    if (json is String && json.isNotEmpty) return SlashCommandInfo(name: json);
     final map = asMap(json);
     final name = asString(map['name']);
     if (name == null || name.isEmpty) return null;
     return SlashCommandInfo(
       name: name,
+      source: asString(map['source']) ?? 'unknown',
       description: asString(map['description']),
     );
   }

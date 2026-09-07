@@ -91,12 +91,20 @@ export interface EvSessionChanged {
 	sessionId: string;
 	sessionName?: string;
 }
+// One subagent's state as the parent sees it. `phase` is the lifecycle or
+// progress status; the rest is what a reader needs to tell a working agent
+// from a stuck one without opening its transcript.
 export interface EvSubagent {
 	k: "subagent";
 	id: string;
 	name: string;
 	phase: string;
 	text: string;
+	agentType?: string;
+	tool?: string;
+	toolCount?: number;
+	tokens?: number;
+	durationMs?: number;
 }
 export interface EvBashOutput {
 	k: "bash_output";
@@ -229,6 +237,14 @@ export interface FastModeSummary {
 	active: boolean;
 }
 
+/// A message waiting to be sent. It has not reached the model, so a client
+/// may still rewrite or drop it.
+export interface QueuedMessage {
+	id: string;
+	text: string;
+	createdAt: number;
+}
+
 export interface StateSnapshot {
 	sessionId: string;
 	sessionName?: string;
@@ -238,7 +254,14 @@ export interface StateSnapshot {
 	thinkingLevel?: string;
 	streaming: boolean;
 	compacting?: boolean;
+	/// Count of messages the agent itself has pending. `hasPendingMessages`
+	/// is a boolean, so this is presence rather than a real count.
 	queued: number;
+
+	/// Messages this plugin is holding until the agent goes idle. Held here
+	/// rather than handed straight to the agent so they stay visible and
+	/// editable from a client.
+	queue?: QueuedMessage[];
 	fastMode?: FastModeSummary;
 	autoCompaction?: boolean;
 	steeringMode?: string;

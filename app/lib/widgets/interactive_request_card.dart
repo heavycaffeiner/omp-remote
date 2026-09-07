@@ -103,7 +103,7 @@ class _InteractiveRequestCardState extends State<InteractiveRequestCard> {
         color: theme.colorScheme.primaryContainer,
         margin: const EdgeInsets.all(AppSpacing.md),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(AppRadius.large),
           side: BorderSide(color: theme.colorScheme.primary, width: 2),
         ),
         child: Padding(
@@ -181,7 +181,7 @@ class _BodySurface extends StatelessWidget {
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: child,
     );
@@ -522,7 +522,7 @@ class _ApprovalBody extends StatelessWidget {
               padding: const EdgeInsets.all(AppSpacing.sm),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+                borderRadius: BorderRadius.circular(AppRadius.small),
               ),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,

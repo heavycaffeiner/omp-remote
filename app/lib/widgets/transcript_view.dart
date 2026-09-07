@@ -90,10 +90,7 @@ class _TranscriptViewState extends State<TranscriptView> {
         }
         return ListView.builder(
           controller: _scrollController,
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
           itemCount: entries.length,
           itemBuilder: (context, index) => _TranscriptRow(
             key: ValueKey(entries[index].id),
@@ -117,7 +114,7 @@ class _TranscriptRow extends StatelessWidget {
       builder: (context, _) {
         switch (entry.kind) {
           case TranscriptKind.message:
-            return _MessageBubble(entry: entry);
+            return _MessageRow(entry: entry);
           case TranscriptKind.tool:
             return _ToolCard(entry: entry);
           case TranscriptKind.notice:
@@ -148,7 +145,7 @@ class _CodeBlock extends StatelessWidget {
       padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderRadius: BorderRadius.circular(AppRadius.small),
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -169,9 +166,7 @@ String _summarizeToolInput(Object? input) {
   if (input == null) return '';
   if (input is String) return input;
   if (input is Map) {
-    return input.entries
-        .map((e) => '${e.key}: ${e.value}')
-        .join(', ');
+    return input.entries.map((e) => '${e.key}: ${e.value}').join(', ');
   }
   if (input is List) return input.join(', ');
   return input.toString();
@@ -188,85 +183,241 @@ String _formatToolInput(Object? input) {
   return input.toString();
 }
 
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.entry});
+/// One piece of a message body: either prose someone wrote or a block the
+/// harness wrapped in a tag. Tagged blocks arrive inline in the same text,
+/// so without splitting them out they read as if the user had typed them.
+class _Segment {
+  const _Segment({required this.text, this.tag});
+
+  final String text;
+
+  /// The wrapper's tag name, or null for ordinary prose.
+  final String? tag;
+}
+
+/// Any paired tag whose name is hyphen- or underscore-separated, plus a few
+/// single-word ones the harness uses. The separator requirement is what
+/// keeps ordinary markup in prose (`<div>`, `<b>`) from being treated as a
+/// system block.
+final RegExp _taggedBlock = RegExp(
+  r'<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+|advisory|critical|instruction|important|reminder|thinking)\b[^>]*>([\s\S]*?)</\1\s*>',
+  multiLine: true,
+);
+
+List<_Segment> _splitTagged(String text) {
+  final segments = <_Segment>[];
+  var cursor = 0;
+  for (final match in _taggedBlock.allMatches(text)) {
+    final before = text.substring(cursor, match.start).trim();
+    if (before.isNotEmpty) segments.add(_Segment(text: before));
+    final body = (match.group(2) ?? '').trim();
+    if (body.isNotEmpty) {
+      segments.add(_Segment(text: body, tag: match.group(1)));
+    }
+    cursor = match.end;
+  }
+  final rest = text.substring(cursor).trim();
+  if (rest.isNotEmpty || segments.isEmpty) {
+    segments.add(_Segment(text: segments.isEmpty ? text : rest));
+  }
+  return segments;
+}
+
+/// A tagged block, set apart from the prose around it. Known tags get their
+/// own icon and accent; anything else falls back to the tag name with a
+/// neutral tag icon, so a tag nobody anticipated still reads as a block
+/// rather than as stray markup.
+class _TaggedBlock extends StatelessWidget {
+  const _TaggedBlock({required this.tag, required this.text});
+
+  final String tag;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final (String label, IconData icon, Color color) = switch (tag) {
+      'advisory' => ('advisor', Icons.rate_review_outlined, scheme.tertiary),
+      'system-reminder' || 'reminder' => (
+        'reminder',
+        Icons.push_pin_outlined,
+        scheme.onSurfaceVariant,
+      ),
+      'system-notice' => ('notice', Icons.campaign_outlined, scheme.secondary),
+      'system-directive' || 'system-interrupt' => (
+        tag == 'system-interrupt' ? 'interrupt' : 'directive',
+        Icons.gavel_outlined,
+        scheme.error,
+      ),
+      'critical' || 'important' => (tag, Icons.priority_high, scheme.error),
+      'instruction' || 'instructions' => (
+        'instruction',
+        Icons.menu_book_outlined,
+        scheme.primary,
+      ),
+      'thinking' => ('thinking', Icons.psychology_outlined, scheme.tertiary),
+      'tool_use_error' => ('tool error', Icons.error_outline, scheme.error),
+      'user-prompt-submit-hook' ||
+      'hook' => ('hook', Icons.link_outlined, scheme.secondary),
+      'repo-rules' || 'workstation' || 'file' => (
+        tag.replaceAll('-', ' '),
+        Icons.folder_outlined,
+        scheme.onSurfaceVariant,
+      ),
+      _ => (
+        tag.replaceAll('-', ' ').replaceAll('_', ' '),
+        Icons.sell_outlined,
+        scheme.onSurfaceVariant,
+      ),
+    };
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: const BorderRadius.all(Radius.circular(AppRadius.small)),
+        border: Border(left: BorderSide(color: color, width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 13, color: color),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(color: color),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          SelectableText(
+            text,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One log line: a gutter carrying the role, then the content. A transcript
+/// reads top to bottom at a single left edge, so alternating alignment and
+/// rounded bubbles only cost horizontal space and make long tool output
+/// harder to scan.
+class _MessageRow extends StatelessWidget {
+  const _MessageRow({required this.entry});
 
   final TranscriptEntry entry;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isUser = entry.role == 'user';
-    final isAssistant = entry.role == 'assistant';
-    final bubbleColor = isUser
-        ? theme.colorScheme.primaryContainer
-        : (isAssistant
-              ? theme.colorScheme.surfaceContainerHigh
-              : theme.colorScheme.tertiaryContainer);
-    final textColor = isUser
-        ? theme.colorScheme.onPrimaryContainer
-        : (isAssistant
-              ? theme.colorScheme.onSurface
-              : theme.colorScheme.onTertiaryContainer);
-    final roleLabel = isUser
-        ? 'You'
-        : (isAssistant ? 'Assistant' : entry.role);
-    final roleIcon = isUser
-        ? Icons.person_outline
-        : (isAssistant ? Icons.smart_toy_outlined : Icons.info_outline);
-    final streamingSuffix = entry.open ? ' (streaming)' : '';
+    final scheme = theme.colorScheme;
+    final role = entry.role;
+
+    final (String label, IconData icon, Color color) = switch (role) {
+      'user' => ('you', Icons.person_outline, scheme.primary),
+      'assistant' => ('omp', Icons.smart_toy_outlined, scheme.onSurface),
+      'system' => ('system', Icons.info_outline, scheme.onSurfaceVariant),
+      _ => (role, Icons.chat_bubble_outline, scheme.onSurfaceVariant),
+    };
+
+    // A user line gets a tinted background so the eye can find the turn
+    // boundaries in a long log without relying on colour alone: the gutter
+    // label and icon differ too.
+    final isUser = role == 'user';
 
     return Semantics(
-      label: '$roleLabel$streamingSuffix: ${entry.text}',
-      child: Align(
-        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-          padding: const EdgeInsets.all(AppSpacing.md),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85,
-          ),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+      label: '$label${entry.open ? ", streaming" : ""}: ${entry.text}',
+      child: Container(
+        color: isUser ? scheme.surfaceContainerHighest : null,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Gutter(icon: icon, label: label, color: color),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(roleIcon, size: 14, color: textColor),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    roleLabel,
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: textColor,
+                  if (entry.thinking.isNotEmpty)
+                    _ThinkingBlock(
+                      text: entry.thinking,
+                      color: scheme.onSurfaceVariant,
                     ),
-                  ),
+                  for (final segment in _splitTagged(entry.text))
+                    if (segment.tag != null)
+                      _TaggedBlock(tag: segment.tag!, text: segment.text)
+                    else if (segment.text.isNotEmpty)
+                      SelectableText(
+                        segment.text,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurface,
+                        ),
+                      ),
                   if (entry.open) ...[
-                    const SizedBox(width: AppSpacing.sm),
+                    const SizedBox(height: AppSpacing.xs),
                     SizedBox(
-                      width: 10,
-                      height: 10,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: textColor,
+                      width: 72,
+                      height: 2,
+                      child: LinearProgressIndicator(
+                        minHeight: 2,
+                        backgroundColor: scheme.surfaceContainerHighest,
                       ),
                     ),
                   ],
                 ],
               ),
-              if (entry.thinking.isNotEmpty)
-                _ThinkingBlock(text: entry.thinking, color: textColor),
-              const SizedBox(height: AppSpacing.xs),
-              SelectableText(
-                entry.text,
-                style: theme.textTheme.bodyMedium?.copyWith(color: textColor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fixed-width left column naming who produced the line. Fixed so every row
+/// aligns at the same content edge.
+class _Gutter extends StatelessWidget {
+  const _Gutter({required this.icon, required this.label, required this.color});
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  static const double width = 68;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 2, right: AppSpacing.sm),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: AppSpacing.xs),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.clip,
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: color, fontFamily: 'monospace'),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -332,10 +483,8 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
             ),
             child: SelectableText(
               widget.text,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: quietColor,
-                fontStyle: FontStyle.italic,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: quietColor, fontStyle: FontStyle.italic),
             ),
           ),
       ],
@@ -386,81 +535,90 @@ class _ToolCardState extends State<_ToolCard> {
     final formattedInput = _formatToolInput(entry.toolInput);
 
     return Semantics(
-      label: 'Tool $name, $statusLabel${summary.isNotEmpty ? ', $summary' : ''}',
-      child: Card(
-        margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: Row(
-                    children: [
-                      Icon(Icons.build_outlined, size: 18),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(name, style: theme.textTheme.titleSmall),
-                            if (summary.isNotEmpty)
-                              Text(
-                                summary,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
+      label:
+          'Tool $name, $statusLabel${summary.isNotEmpty ? ', $summary' : ''}',
+      child: Padding(
+        padding: const EdgeInsets.only(
+          left: _Gutter.width + AppSpacing.sm,
+          right: AppSpacing.sm,
+          top: AppSpacing.xs,
+          bottom: AppSpacing.xs,
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.medium),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Row(
+                      children: [
+                        Icon(Icons.build_outlined, size: 18),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(name, style: theme.textTheme.titleSmall),
+                              if (summary.isNotEmpty)
+                                Text(
+                                  summary,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Icon(statusIcon, color: statusColor, size: 18),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        statusLabel,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: statusColor,
+                        const SizedBox(width: AppSpacing.sm),
+                        Icon(statusIcon, color: statusColor, size: 18),
+                        const SizedBox(width: AppSpacing.xs),
+                        Text(
+                          statusLabel,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: statusColor,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Icon(
-                        _expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 18,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ),
-                ),
-                if (_expanded) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  if (formattedInput.isNotEmpty) ...[
-                    Text('Arguments', style: theme.textTheme.labelSmall),
-                    const SizedBox(height: AppSpacing.xs),
-                    _CodeBlock(text: formattedInput, maxHeight: 160),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  if (entry.text.isNotEmpty) ...[
-                    Text('Output', style: theme.textTheme.labelSmall),
-                    const SizedBox(height: AppSpacing.xs),
-                    _CodeBlock(text: entry.text, maxHeight: 240),
-                  ] else if (entry.open)
-                    Text(
-                      'Waiting for output...',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Icon(
+                          _expanded ? Icons.expand_less : Icons.expand_more,
+                          size: 18,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ],
                     ),
+                  ),
+                  if (_expanded) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    if (formattedInput.isNotEmpty) ...[
+                      Text('Arguments', style: theme.textTheme.labelSmall),
+                      const SizedBox(height: AppSpacing.xs),
+                      _CodeBlock(text: formattedInput, maxHeight: 160),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
+                    if (entry.text.isNotEmpty) ...[
+                      Text('Output', style: theme.textTheme.labelSmall),
+                      const SizedBox(height: AppSpacing.xs),
+                      _CodeBlock(text: entry.text, maxHeight: 240),
+                    ] else if (entry.open)
+                      Text(
+                        'Waiting for output...',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

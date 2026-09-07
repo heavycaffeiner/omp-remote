@@ -94,4 +94,73 @@ void main() {
 
     expect(find.byType(PairingReviewScreen), findsOneWidget);
   });
+
+  testWidgets('a tagged system block is set apart from the prose around it', (WidgetTester tester) async {
+    final client = RelayClient(
+      profile: ConnectionProfile(
+        url: Uri.parse('ws://localhost:8788'),
+        token: 'test-token',
+        role: ClientRole.control,
+        agentId: 'host/agent',
+      ),
+    );
+    addTearDown(client.dispose);
+    final store = SessionStore(relayClient: client);
+    addTearDown(store.dispose);
+
+    store.applyEventForTest(
+      const MessageEvent(
+        role: 'user',
+        text: 'do the thing\n'
+            '<system-reminder>\n7 todo items still open.\n</system-reminder>\n'
+            '<advisory severity="nit">check the port parsing</advisory>\n'
+            '<some-future-tag>unanticipated</some-future-tag>',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: TranscriptView(sessionStore: store)),
+      ),
+    );
+    await tester.pump();
+
+    // Each wrapper becomes its own labelled block, and an unknown tag still
+    // renders as one rather than leaking angle brackets into the prose.
+    expect(find.text('reminder'), findsOneWidget);
+    expect(find.text('advisor'), findsOneWidget);
+    expect(find.text('some future tag'), findsOneWidget);
+    expect(find.textContaining('<system-reminder>'), findsNothing);
+    expect(find.text('do the thing'), findsOneWidget);
+  });
+
+  testWidgets('a tool result does not repeat below its tool card', (WidgetTester tester) async {
+    final client = RelayClient(
+      profile: ConnectionProfile(
+        url: Uri.parse('ws://localhost:8788'),
+        token: 'test-token',
+        role: ClientRole.control,
+        agentId: 'host/agent',
+      ),
+    );
+    addTearDown(client.dispose);
+    final store = SessionStore(relayClient: client);
+    addTearDown(store.dispose);
+
+    // The wire order a real turn produces: an assistant message carrying only
+    // a tool call, the call, its result, then the toolResult message.
+    store.applyEventForTest(const MessageEvent(role: 'assistant', text: ''));
+    store.applyEventForTest(
+      const ToolStartEvent(id: 't1', name: 'bash', input: 'echo hi'),
+    );
+    store.applyEventForTest(
+      const ToolEndEvent(id: 't1', name: 'bash', ok: true, text: 'hi'),
+    );
+    store.applyEventForTest(const MessageEvent(role: 'toolResult', text: 'hi'));
+
+    // One entry: the tool card. The empty assistant block and the duplicate
+    // result are both dropped.
+    expect(store.entries, hasLength(1));
+    expect(store.entries.single.kind, TranscriptKind.tool);
+  });
 }

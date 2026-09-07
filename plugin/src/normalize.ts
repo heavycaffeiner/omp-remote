@@ -124,3 +124,163 @@ export function buildAutoRetryStartEvent(errorMessage: string): RemoteEvent {
 export function buildAutoRetryEndEvent(success: boolean, finalError: string | undefined): RemoteEvent {
 	return { k: "retry", phase: "end", text: truncateText(success ? "recovered" : (finalError ?? "failed"), TEXT_MAX_BYTES) };
 }
+
+// Field readers for persisted session entries. Session JSONL is outside data:
+// narrow every read instead of asserting a shape onto it.
+function field(value: unknown, key: string): unknown {
+	if (!value || typeof value !== "object") return undefined;
+	if (!(key in value)) return undefined;
+	return (value as Record<string, unknown>)[key];
+}
+
+function stringField(value: unknown, key: string): string {
+	const raw = field(value, key);
+	return typeof raw === "string" ? raw : "";
+}
+
+// Rebuilds a transcript from persisted session entries. A resumed session
+// replays no `pi.on` events, so without this a client that attaches to one
+// sees an empty conversation. Tool calls live inside assistant messages and
+// their results arrive as separate `toolResult` messages, so both are folded
+// back into the tool_start/tool_end pair a live turn would have produced.
+export function buildHistoryEvents(entries: readonly unknown[]): RemoteEvent[] {
+	const events: RemoteEvent[] = [];
+	for (const entry of entries) {
+		const type = field(entry, "type");
+
+		if (type === "compaction") {
+			const summary = stringField(entry, "summary");
+			events.push({ k: "compaction", phase: "end" });
+			if (summary.length > 0) {
+				events.push({ k: "message", role: "system", text: truncateText(summary, TEXT_MAX_BYTES) });
+			}
+			continue;
+		}
+
+		if (type === "custom_message") {
+			const content = field(entry, "content");
+			const text = typeof content === "string" ? content : extractContentText(content);
+			if (text.length > 0) {
+				events.push({ k: "message", role: "system", text: truncateText(text, TEXT_MAX_BYTES) });
+			}
+			continue;
+		}
+
+		if (type !== "message") continue;
+		const message = field(entry, "message");
+		if (!message || typeof message !== "object") continue;
+
+		if (field(message, "role") === "toolResult") {
+			events.push(
+				buildToolEndEvent(
+					stringField(message, "toolCallId"),
+					stringField(message, "toolName"),
+					message,
+					field(message, "isError") === true,
+				),
+			);
+			continue;
+		}
+
+		// The shape checks above are what `extractMessageParts` itself narrows
+		// against, so handing it the same value is safe.
+		const asMessage = message as AgentMessage;
+		const parts = extractMessageParts(asMessage);
+		if (parts.text.length > 0 || parts.thinking !== undefined) {
+			events.push(buildMessageEvent(asMessage));
+		}
+		for (const call of extractToolCalls(message)) events.push(call);
+	}
+	return events;
+}
+
+// Text out of a content-block array, ignoring images and other block kinds.
+function extractContentText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	const parts: string[] = [];
+	for (const block of content) {
+		if (field(block, "type") === "text") {
+			const text = field(block, "text");
+			if (typeof text === "string") parts.push(text);
+		}
+	}
+	return parts.join("");
+}
+
+function extractToolCalls(message: unknown): RemoteEvent[] {
+	const content = field(message, "content");
+	if (!Array.isArray(content)) return [];
+	const calls: RemoteEvent[] = [];
+	for (const block of content) {
+		if (field(block, "type") !== "toolCall") continue;
+		calls.push({
+			k: "tool_start",
+			id: stringField(block, "id"),
+			name: stringField(block, "name"),
+			input: truncateText(safeStringifyInput(field(block, "arguments")), TOOL_INPUT_MAX_BYTES),
+		});
+	}
+	return calls;
+}
+
+const SUBAGENT_TEXT_MAX_BYTES = 2048;
+
+// A lifecycle frame names a spawn and its outcome. `detached` spawns are the
+// ones a parent keeps working alongside, but a blocking spawn is just as
+// worth watching from a phone, so both are forwarded.
+export function buildSubagentLifecycleEvent(data: unknown): RemoteEvent | undefined {
+	const id = stringField(data, "id");
+	if (id.length === 0) return undefined;
+	const status = stringField(data, "status");
+	const agentType = stringField(data, "agent");
+	const description = stringField(data, "description");
+	return {
+		k: "subagent",
+		id,
+		name: id,
+		phase: status.length > 0 ? status : "started",
+		text: truncateText(description, SUBAGENT_TEXT_MAX_BYTES),
+		...(agentType.length > 0 ? { agentType } : {}),
+	};
+}
+
+// Progress frames are already coalesced upstream, so each one is forwarded as
+// it arrives. The text is the agent's own last stated intent when it has one,
+// falling back to its assignment, so a reader sees what it is doing rather
+// than just that it is alive.
+export function buildSubagentProgressEvent(data: unknown): RemoteEvent | undefined {
+	const progress = field(data, "progress");
+	if (!progress || typeof progress !== "object") return undefined;
+	const id = stringField(progress, "id");
+	if (id.length === 0) return undefined;
+
+	const intent = stringField(progress, "lastIntent");
+	const description = stringField(progress, "description");
+	const assignment = stringField(progress, "assignment");
+	const task = stringField(progress, "task");
+	const text = intent || description || assignment || task;
+
+	const tool = stringField(progress, "currentTool");
+	const toolCount = numberField(progress, "toolCount");
+	const tokens = numberField(progress, "tokens");
+	const durationMs = numberField(progress, "durationMs");
+	const agentType = stringField(progress, "agent");
+
+	return {
+		k: "subagent",
+		id,
+		name: id,
+		phase: stringField(progress, "status") || "running",
+		text: truncateText(text, SUBAGENT_TEXT_MAX_BYTES),
+		...(agentType.length > 0 ? { agentType } : {}),
+		...(tool.length > 0 ? { tool } : {}),
+		...(toolCount !== undefined ? { toolCount } : {}),
+		...(tokens !== undefined ? { tokens } : {}),
+		...(durationMs !== undefined ? { durationMs } : {}),
+	};
+}
+
+function numberField(value: unknown, key: string): number | undefined {
+	const raw = field(value, key);
+	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}

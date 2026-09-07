@@ -592,6 +592,14 @@ export class LocalServer {
 		if (!entry) return;
 		ws.data.subscriptions.add(agentId);
 
+		// A client attaching to a resumed session before the deferred replay
+		// ran would see an empty transcript. Doing it here too costs one
+		// branch walk and covers the race.
+		if (agentId === this.bridge.agentId && !this.bridge.historyReplayed) {
+			const ctx = this.bridge.getLatestCtx();
+			if (ctx) this.bridge.replayHistory(ctx);
+		}
+
 		// State first, then anything still awaiting an answer, then the events
 		// this client has not seen: the order the protocol specifies.
 		if (entry.state) this.send(ws, { t: "state", agentId, state: entry.state });

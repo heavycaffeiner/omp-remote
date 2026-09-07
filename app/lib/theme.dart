@@ -1,145 +1,195 @@
-// Central design tokens: seeded color schemes, spacing, corner radii, and
-// the ThemeData built from them. One deliberate visual language instead of
-// ad hoc paddings and colors scattered through widgets.
+// Central design tokens and the ThemeData built from them, following the
+// Material 3 spacing, shape, and colour-role scales rather than ad hoc
+// paddings and colours scattered through widgets.
 
 import 'package:flutter/material.dart';
 
-/// Fixed 4px-grid spacing scale used everywhere instead of literal numbers.
+/// Fixed 4dp-grid spacing scale used everywhere instead of literal numbers.
 abstract final class AppSpacing {
   static const double xs = 4;
   static const double sm = 8;
   static const double md = 12;
   static const double lg = 16;
   static const double xl = 24;
+  static const double xxl = 32;
 }
 
-/// Corner radii, applied consistently to cards, sheets, and containers.
+/// The Material 3 shape scale. Components pick a step from here so corner
+/// rounding is consistent and never invented per widget.
 abstract final class AppRadius {
-  static const double sm = 8;
-  static const double md = 12;
-  static const double lg = 16;
+  static const double extraSmall = 4;
+  static const double small = 8;
+  static const double medium = 12;
+  static const double large = 16;
+  static const double extraLarge = 28;
 }
 
 const Color _seed = Color(0xFF2F6FED);
 
-ColorScheme _buildScheme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
-  // The seeded error color reads low-contrast in dark mode; use Material's
-  // recommended dark error pair instead.
-  if (brightness == Brightness.dark) {
-    return scheme.copyWith(
-      error: const Color(0xFFFFB4AB),
-      onError: const Color(0xFF690005),
-      errorContainer: const Color(0xFF93000A),
-      onErrorContainer: const Color(0xFFFFDAD6),
-    );
-  }
-  return scheme;
-}
-
 ThemeData buildAppTheme(Brightness brightness) {
-  final isDark = brightness == Brightness.dark;
-  final scheme = _buildScheme(brightness);
-  final baseText = isDark
-      ? Typography.whiteMountainView
-      : Typography.blackMountainView;
-  // Slightly heavier weights on labels/titles hold up better than the
-  // default thin weights once a user cranks up system dynamic type.
-  final textTheme = baseText.copyWith(
-    titleMedium: baseText.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-    titleSmall: baseText.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-    labelLarge: baseText.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-    labelMedium: baseText.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+  final scheme = ColorScheme.fromSeed(
+    seedColor: _seed,
+    brightness: brightness,
+  );
+  final base = ThemeData(colorScheme: scheme);
+
+  // The Material 3 typescale, with slightly heavier titles and labels: the
+  // default weights thin out on a phone at large system type sizes.
+  final textTheme = base.textTheme.copyWith(
+    titleMedium: base.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+    ),
+    titleSmall: base.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.w600,
+    ),
+    labelLarge: base.textTheme.labelLarge?.copyWith(
+      fontWeight: FontWeight.w600,
+    ),
+    labelMedium: base.textTheme.labelMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+    ),
   );
 
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: scheme,
-    brightness: brightness,
+  return base.copyWith(
     scaffoldBackgroundColor: scheme.surface,
     textTheme: textTheme,
-    // Dynamic-type friendly: nothing in this theme clips text at large
-    // scale factors because it configures typography, not fixed heights.
     appBarTheme: AppBarTheme(
       backgroundColor: scheme.surface,
       foregroundColor: scheme.onSurface,
       surfaceTintColor: scheme.surfaceTint,
       elevation: 0,
-      scrolledUnderElevation: 2,
-      titleTextStyle: textTheme.titleMedium?.copyWith(color: scheme.onSurface),
+      scrolledUnderElevation: 3,
+      centerTitle: false,
+      titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
-      color: scheme.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
+      color: scheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.medium)),
       ),
       margin: EdgeInsets.zero,
     ),
     chipTheme: ChipThemeData(
       backgroundColor: scheme.surfaceContainerHigh,
       side: BorderSide.none,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.small)),
       ),
-      labelStyle: textTheme.labelSmall,
+      labelStyle: textTheme.labelMedium,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
     ),
+    // Material 3 filled fields: no outline, rounded top corners, and an
+    // indicator that thickens on focus.
     inputDecorationTheme: InputDecorationTheme(
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        borderSide: BorderSide(color: scheme.outline),
+      filled: true,
+      fillColor: scheme.surfaceContainerHighest,
+      border: const UnderlineInputBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadius.extraSmall),
+        ),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        borderSide: BorderSide(color: scheme.outline),
+      enabledBorder: UnderlineInputBorder(
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppRadius.extraSmall),
+        ),
+        borderSide: BorderSide(color: scheme.onSurfaceVariant),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
+      focusedBorder: UnderlineInputBorder(
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppRadius.extraSmall),
+        ),
         borderSide: BorderSide(color: scheme.primary, width: 2),
       ),
-      filled: true,
-      fillColor: isDark
-          ? scheme.surfaceContainerHighest
-          : scheme.surfaceContainerLow,
+      errorBorder: UnderlineInputBorder(
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppRadius.extraSmall),
+        ),
+        borderSide: BorderSide(color: scheme.error),
+      ),
       contentPadding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+    ),
+    // Material 3 buttons are stadium-shaped. 48dp minimum keeps every one of
+    // them at or above the recommended touch target.
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(64, 48),
+        shape: const StadiumBorder(),
       ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         minimumSize: const Size(64, 48),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
+        shape: const StadiumBorder(),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(64, 48),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
+        shape: const StadiumBorder(),
       ),
     ),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
         minimumSize: const Size(64, 48),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
+        shape: const StadiumBorder(),
       ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: SegmentedButton.styleFrom(minimumSize: const Size(48, 48)),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        minimumSize: const Size(48, 48),
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+    ),
+    listTileTheme: ListTileThemeData(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.medium)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      iconColor: scheme.onSurfaceVariant,
+      titleTextStyle: textTheme.bodyLarge,
+      subtitleTextStyle: textTheme.bodyMedium?.copyWith(
+        color: scheme.onSurfaceVariant,
       ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: scheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      showDragHandle: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadius.extraLarge),
+        ),
       ),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: scheme.surfaceContainerHigh,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.extraLarge)),
+      ),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: scheme.inverseSurface,
+      contentTextStyle: textTheme.bodyMedium?.copyWith(
+        color: scheme.onInverseSurface,
+      ),
+      actionTextColor: scheme.inversePrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.extraSmall)),
+      ),
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: scheme.primary,
+      linearTrackColor: scheme.surfaceContainerHighest,
     ),
     dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
     visualDensity: VisualDensity.adaptivePlatformDensity,
