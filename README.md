@@ -217,30 +217,10 @@ Go 1.27, Bun 1.4, Flutter 3.47 with Dart 3.13.
 
 ### Releasing
 
-Pushing a `v*` tag builds the relay image for both architectures, builds a
-signed APK, and attaches it to a GitHub release.
-
-The APK is signed with an upload key held as repository secrets. The workflow
-fails if any is missing rather than falling back to the debug key, since a
-debug-signed APK cannot be upgraded in place by a properly signed one later.
-
-| Secret                       | What it holds                             |
-| ---------------------------- | ----------------------------------------- |
-| `ANDROID_KEYSTORE_BASE64`    | The keystore file, base64 encoded         |
-| `ANDROID_KEYSTORE_PASSWORD`  | Keystore password                         |
-| `ANDROID_KEY_ALIAS`          | Key alias inside the keystore             |
-| `ANDROID_KEY_PASSWORD`       | Password for that key                     |
-
-To create one:
-
-```sh
-keytool -genkey -v -keystore upload-keystore.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias upload
-base64 -w0 upload-keystore.jks
-```
-
-Keep the keystore. Losing it means no future build can update an installed
-app, because Android identifies an app by its signing key.
+Pushing a `v*` tag builds the relay image for `linux/amd64` and `linux/arm64`,
+builds a signed APK, and attaches it to a GitHub release. The signing key is
+held in repository secrets; the workflow fails rather than falling back to the
+debug key, since a debug-signed APK cannot be upgraded in place later.
 
 ## License
 

@@ -66,19 +66,30 @@ jobs:
             android/app/src/main/AndroidManifest.xml
           grep -q 'key.properties' android/app/build.gradle.kts
 
-      # Fails the job when a signing secret is missing, rather than silently
-      # falling back to the debug key and shipping an unverifiable APK.
+      # Signing secrets, set on the repository:
+      #   OMPREMOTE_ANDROID_KEYSTORE_BASE64    keystore file, base64 encoded
+      #   OMPREMOTE_ANDROID_KEYSTORE_PASSWORD  keystore password
+      #   OMPREMOTE_ANDROID_KEY_ALIAS          key alias
+      #   OMPREMOTE_ANDROID_KEY_PASSWORD       key password
+      # Missing any of them fails the job rather than silently falling back to
+      # the debug key, which would ship an APK that can never be upgraded.
       - name: Install the signing key
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.OMPREMOTE_ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.OMPREMOTE_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.OMPREMOTE_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.OMPREMOTE_ANDROID_KEY_PASSWORD }}
         working-directory: app/android
         run: |
-          for v in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [ -z "${!v}" ]; then
-              echo "::error::secret for $v is not set; see the README" >&2
+          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            case "$v" in
+              KEYSTORE_PASSWORD) value=$STORE_PASSWORD ;;
+              KEYSTORE_BASE64)   value=$KEYSTORE_BASE64 ;;
+              KEY_ALIAS)         value=$KEY_ALIAS ;;
+              KEY_PASSWORD)      value=$KEY_PASSWORD ;;
+            esac
+            if [ -z "$value" ]; then
+              echo "::error::OMPREMOTE_ANDROID_$v is not set; see the README" >&2
               exit 1
             fi
           done
