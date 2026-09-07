@@ -335,7 +335,7 @@ class _ProfileTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final roleLabel = profile.role == ClientRole.control ? 'Control' : 'Viewer';
     final transportLabel = profile.isDirect ? 'Direct' : 'Relay';
-    final agentLine = profile.remoteAgentId ?? profile.agentId;
+    final agentLine = profile.agentId;
     final subtitleLines = [
       '$transportLabel, role: $roleLabel',
       ?agentLine,

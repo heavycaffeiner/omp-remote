@@ -1,8 +1,9 @@
-// A direct connection carries no agent id in its profile: the protocol says
-// there is exactly one agent, so the client learns it from the welcome roster.
-// Two bugs lived in that gap. The client never subscribed at all, so no events
-// arrived; and once it did, the id was not stored, so commands and answers to
-// interactive requests had no target and were dropped.
+// A direct connection reaches every session on the workstation. When pairing
+// named one it is the target; when it did not, a lone roster entry is adopted
+// from the welcome frame. Two bugs lived in that gap. The client never
+// subscribed at all, so no events arrived; and once it did, the id was not
+// stored, so commands and answers to interactive requests had no target and
+// were dropped.
 
 import 'dart:async';
 import 'dart:convert';
@@ -15,17 +16,23 @@ import 'package:remote_omp/relay_client.dart';
 /// A stand-in for the plugin's local server: accepts one client, answers the
 /// handshake, and records what the client sends.
 class _FakeAgent {
-  _FakeAgent(this._server);
+  _FakeAgent(this._server, this.roster);
 
   final HttpServer _server;
   final List<Map<String, Object?>> received = [];
   WebSocket? _socket;
 
   static const agentId = 'workstation/project#ab12';
+  static const secondAgentId = 'workstation/api#cd34';
 
-  static Future<_FakeAgent> start() async {
+  /// Agent ids this workstation reports in `welcome`. A direct connection
+  /// serves every session on the machine, so more than one is the normal
+  /// case, not an edge case.
+  final List<String> roster;
+
+  static Future<_FakeAgent> start({List<String> roster = const [agentId]}) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final agent = _FakeAgent(server);
+    final agent = _FakeAgent(server, roster);
     unawaited(agent._accept());
     return agent;
   }
@@ -47,14 +54,15 @@ class _FakeAgent {
               'clientId': frame['clientId'],
               'role': 'control',
               'agents': [
-                {
-                  'agentId': agentId,
-                  'name': 'project',
-                  'host': 'workstation',
-                  'cwd': '/home/kim/project',
-                  'online': true,
-                  'connectedAt': 1757203200000,
-                },
+                for (final id in roster)
+                  {
+                    'agentId': id,
+                    'name': id.split('/').last.split('#').first,
+                    'host': 'workstation',
+                    'cwd': '/home/kim/project',
+                    'online': true,
+                    'connectedAt': 1757203200000,
+                  },
               ],
             }),
           );
@@ -109,6 +117,36 @@ void main() {
     final subscribe = agent.received.firstWhere((f) => f['t'] == 'subscribe');
     expect(subscribe['agentId'], _FakeAgent.agentId);
     expect(subscribe['since'], 0);
+  });
+
+  test('a paired session is the target even when the workstation serves several', () async {
+    await agent.close();
+    agent = await _FakeAgent.start(
+      roster: const [_FakeAgent.agentId, _FakeAgent.secondAgentId],
+    );
+    client = RelayClient(
+      profile: ConnectionProfile(
+        url: agent.url,
+        token: 'token',
+        role: ClientRole.control,
+        agentId: _FakeAgent.secondAgentId,
+        name: 'phone',
+      ),
+    );
+    await client.connect();
+    await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
+
+    final subscribe = agent.received.firstWhere((f) => f['t'] == 'subscribe');
+    expect(subscribe['agentId'], _FakeAgent.secondAgentId);
+
+    // The bug this guards: with no target the client connects but every
+    // command fails with "no agent selected".
+    unawaited(
+      client.sendCommand(CommandName.abort).catchError((Object _) => null),
+    );
+    await _until(() => agent.received.any((f) => f['t'] == 'command'));
+    final command = agent.received.firstWhere((f) => f['t'] == 'command');
+    expect(command['agentId'], _FakeAgent.secondAgentId);
   });
 
   test('commands reach the agent after that implicit subscribe', () async {

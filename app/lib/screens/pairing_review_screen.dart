@@ -46,6 +46,7 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
       role: payload.role,
       agentId: payload.agentId,
       deviceName: payload.name,
+      isDirect: payload.transport == PairingTransport.direct,
     );
     await widget.profileStore.upsert(saved);
     if (!mounted) return;

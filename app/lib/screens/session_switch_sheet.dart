@@ -147,7 +147,7 @@ class _ProfileSwitchTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final transport = profile.isDirect ? 'Direct' : 'Relay';
     final roleLabel = profile.role == ClientRole.control ? 'Control' : 'Viewer';
-    final agentLine = profile.remoteAgentId ?? profile.agentId;
+    final agentLine = profile.agentId;
     final subtitleParts = [
       transport,
       roleLabel,

@@ -23,7 +23,7 @@ class SavedProfile {
     this.deviceName,
     this.cwd,
     this.lastUsedAt,
-    this.remoteAgentId,
+    required this.isDirect,
   });
 
   final String id;
@@ -32,9 +32,9 @@ class SavedProfile {
   final String token;
   final ClientRole role;
 
-  /// Relay subscribe target. Null for a direct connection (which always
-  /// has exactly one agent, selected automatically) and for a relay
-  /// connection whose target has not been chosen yet.
+  /// Subscribe target: which session on the other end this profile talks to.
+  /// Null when pairing did not name one, in which case a lone roster entry
+  /// is adopted on connect.
   final String? agentId;
   final String? deviceName;
 
@@ -47,14 +47,10 @@ class SavedProfile {
   /// ordering in the connection list.
   final int? lastUsedAt;
 
-  /// The workstation's own display agent id (e.g.
-  /// `kim-thinkpad/omp-remote#k69j`), shown in the connection list.
-  /// Distinct from [agentId]: this is display-only and never sent as a
-  /// relay subscribe target, since a direct connection has no relay
-  /// roster to subscribe within.
-  final String? remoteAgentId;
-
-  bool get isDirect => agentId == null;
+  /// Whether this profile dials a workstation directly rather than a relay.
+  /// Stored rather than derived: both transports name a session, so the
+  /// target does not tell them apart.
+  final bool isDirect;
 
   SavedProfile copyWith({
     String? label,
@@ -66,7 +62,7 @@ class SavedProfile {
     String? deviceName,
     String? cwd,
     int? lastUsedAt,
-    String? remoteAgentId,
+    bool? isDirect,
   }) {
     return SavedProfile(
       id: id,
@@ -78,7 +74,7 @@ class SavedProfile {
       deviceName: deviceName ?? this.deviceName,
       cwd: cwd ?? this.cwd,
       lastUsedAt: lastUsedAt ?? this.lastUsedAt,
-      remoteAgentId: remoteAgentId ?? this.remoteAgentId,
+      isDirect: isDirect ?? this.isDirect,
     );
   }
 
@@ -92,7 +88,7 @@ class SavedProfile {
     if (deviceName != null) 'deviceName': deviceName,
     if (cwd != null) 'cwd': cwd,
     if (lastUsedAt != null) 'lastUsedAt': lastUsedAt,
-    if (remoteAgentId != null) 'remoteAgentId': remoteAgentId,
+    'isDirect': isDirect,
   };
 
   static SavedProfile? fromJson(Object? json) {
@@ -102,11 +98,13 @@ class SavedProfile {
     final url = asString(map['url']);
     final token = asString(map['token']);
     final role = clientRoleFromJson(map['role']);
+    final isDirect = map['isDirect'];
     if (id == null ||
         label == null ||
         url == null ||
         token == null ||
-        role == null) {
+        role == null ||
+        isDirect is! bool) {
       return null;
     }
     return SavedProfile(
@@ -119,7 +117,7 @@ class SavedProfile {
       deviceName: asString(map['deviceName']),
       cwd: asString(map['cwd']),
       lastUsedAt: asInt(map['lastUsedAt']),
-      remoteAgentId: asString(map['remoteAgentId']),
+      isDirect: isDirect,
     );
   }
 }

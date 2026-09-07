@@ -34,8 +34,6 @@ class ConnectionProfile {
 
   /// Display name sent in `hello`.
   final String? name;
-
-  bool get isDirect => agentId == null;
 }
 
 class ConnectionStatus {
@@ -258,12 +256,12 @@ class RelayClient {
             clearError: true,
           ),
         );
-        // A relay connection carries an explicit target in `profile.agentId`.
-        // A direct connection never does (it is always exactly one agent), so
-        // the sole roster entry becomes the target. This goes through
-        // subscribeToAgent rather than _sendSubscribe because commands and
-        // request answers read profile.agentId, and leaving it null makes a
-        // direct connection receive events but refuse to send anything.
+        // Pairing usually names the target. When it did not, a lone roster
+        // entry is the only unambiguous choice; with several the user picks
+        // one from the switch sheet. This goes through subscribeToAgent
+        // rather than _sendSubscribe because commands and request answers
+        // read profile.agentId, and leaving it null receives events but
+        // refuses to send anything.
         final target =
             profile.agentId ??
             (frame.agents.length == 1 ? frame.agents.single.agentId : null);

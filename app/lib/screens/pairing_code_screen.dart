@@ -117,7 +117,11 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
           token: outcome.token,
           role: outcome.role,
           cwd: outcome.cwd,
-          remoteAgentId: outcome.agent,
+          // The code named one session out of the roster, so it is the
+          // subscribe target and not merely a label.
+          agentId: outcome.agent,
+          // A code is redeemed against the workstation itself, never a relay.
+          isDirect: true,
           lastUsedAt: DateTime.now().millisecondsSinceEpoch,
         );
         await widget.profileStore.upsert(saved);
@@ -130,6 +134,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                   url: outcome.url,
                   token: outcome.token,
                   role: outcome.role,
+                  agentId: outcome.agent,
                   name: outcome.name,
                 ),
               ),

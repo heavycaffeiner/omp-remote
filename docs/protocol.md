@@ -238,11 +238,11 @@ discovery: there is no scan and no second listener.
   "role": "control" }
 ```
 
-`agent` names the host's own session and is kept for clients that predate the
-roster. Working directories are deliberately absent: this endpoint answers
-anyone who can reach the port, and a filesystem path names a project and a
-user to the whole network. The agent id already carries a project basename
-and a unique suffix, which is enough to tell two sessions apart.
+`agent` names the host's own session. Working directories are deliberately
+absent: this endpoint answers anyone who can reach the port, and a
+filesystem path names a project and a user to the whole network. The agent
+id already carries a project basename and a unique suffix, which is enough
+to tell two sessions apart.
 
 No token appears in a codeless response. The token travels only in the QR, the
 link, or a redeemed code.
