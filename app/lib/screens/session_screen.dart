@@ -123,8 +123,9 @@ class _SessionScreenState extends State<SessionScreen>
       _status.phase == ConnectionPhase.connected;
 
   /// Active session name and agent id, formatted as one line of text, for
-  /// the state header. In relay mode this is found by `subscribedAgentId`
-  /// in the roster; a direct connection always has exactly one agent.
+  /// the state header. Found by `subscribedAgentId` on either transport; a
+  /// direct connection reaches every session on the workstation too, so a
+  /// lone agent is the only case that needs no subscription to name.
   String? get _activeSessionLabel {
     final agents = _status.agents;
     if (agents.isEmpty) return null;

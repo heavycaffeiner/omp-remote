@@ -28,8 +28,8 @@ class ConnectionProfile {
   final String token;
   final ClientRole role;
 
-  /// Required for a relay connection (selects which agent to subscribe to).
-  /// Absent for a direct connection, which always has exactly one agent.
+  /// Selects which agent to subscribe to. Absent when pairing did not name
+  /// one, in which case a lone roster entry is adopted on welcome.
   final String? agentId;
 
   /// Display name sent in `hello`.
@@ -313,8 +313,8 @@ class RelayClient {
 
   /// Switches the target agent: unsubscribes the previous one (if any and
   /// if different), subscribes to the new one, and resets local seq
-  /// tracking so the new agent's history replays from the start. Used both
-  /// for a relay roster switch and to pin a direct connection's one agent.
+  /// tracking so the new agent's history replays from the start. Used for a
+  /// roster switch on either transport.
   void subscribeToAgent(String agentId) {
     final previous = _status.subscribedAgentId;
     final changed = previous != agentId;

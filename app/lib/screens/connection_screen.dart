@@ -9,10 +9,10 @@ import 'pairing_review_screen.dart';
 import 'qr_scan_screen.dart';
 import 'session_screen.dart';
 
-/// Entry screen: pick a saved connection, scan a pairing QR code, enter a
-/// short pairing code, or enter a relay/direct URL and token by hand. No
-/// session content is ever shown here; there is nothing to display until a
-/// connection is established.
+/// Entry screen: pick a saved connection, scan a pairing QR code, paste the
+/// pairing link, or enter a short pairing code. No session content is ever
+/// shown here; there is nothing to display until a connection is
+/// established.
 class ConnectionScreen extends StatefulWidget {
   const ConnectionScreen({required this.profileStore, super.key});
 
