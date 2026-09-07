@@ -1,0 +1,13 @@
+services:
+  relay:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file: .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/relay", "-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
