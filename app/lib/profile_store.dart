@@ -134,14 +134,15 @@ class ProfileStore {
 
   /// All saved profiles, most-recently-used first. A profile never used
   /// (no recorded connect) sorts after every used one, in insertion order.
+  /// The result is modifiable: the mutating methods below build on it.
   List<SavedProfile> readAll() {
     final raw = _prefs.getString(_prefsKey);
-    if (raw == null) return const [];
+    if (raw == null) return <SavedProfile>[];
     Object? decoded;
     try {
       decoded = jsonDecode(raw);
     } on FormatException {
-      return const [];
+      return <SavedProfile>[];
     }
     final result = <SavedProfile>[];
     for (final entry in asList(decoded)) {

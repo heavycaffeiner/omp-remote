@@ -115,10 +115,15 @@ class SessionStore extends ChangeNotifier {
   void _handleFrame(ServerFrame frame) {
     switch (frame) {
       case EventFrame():
-        if (frame.seq <= _lastAppliedSeq && _lastAppliedSeq != 0) {
-          // Agent restarted: seq counter reset. Discard stale local history.
+        // A restarted agent begins its epoch at seq 1, which is the only
+        // case that invalidates local history. Any other seq at or below
+        // what was already applied is a repeat: drop it rather than wipe
+        // the transcript the user is reading.
+        if (frame.seq == 1 && _lastAppliedSeq > 1) {
           clearTranscript();
           _pendingRequests.clear();
+        } else if (frame.seq <= _lastAppliedSeq) {
+          return;
         }
         _lastAppliedSeq = frame.seq;
         _applyEvent(frame.event);

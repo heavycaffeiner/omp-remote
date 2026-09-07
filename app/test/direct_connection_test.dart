@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_omp/protocol.dart';
 import 'package:remote_omp/relay_client.dart';
+import 'package:remote_omp/session_store.dart';
 
 /// A stand-in for the plugin's local server: accepts one client, answers the
 /// handshake, and records what the client sends.
@@ -197,5 +198,33 @@ void main() {
     final resubscribe = agent.received.lastWhere((f) => f['t'] == 'subscribe');
     expect(resubscribe['since'], 7);
     expect(agent.received.any((f) => f['t'] == 'unsubscribe'), isFalse);
+  });
+
+  test('a repeated event leaves the transcript alone, a restart clears it', () async {
+    final store = SessionStore(relayClient: client);
+    addTearDown(store.dispose);
+    await client.connect();
+    await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
+
+    void event(int seq, String text) => agent.send({
+      't': 'event',
+      'agentId': _FakeAgent.agentId,
+      'seq': seq,
+      'event': {'k': 'message', 'role': 'assistant', 'text': text},
+    });
+
+    event(1, 'first');
+    event(2, 'second');
+    await _until(() => store.entries.length == 2);
+
+    // A duplicate used to read as an agent restart and wipe everything the
+    // user was reading.
+    event(2, 'second');
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(store.entries, hasLength(2));
+
+    // A real restart begins again at seq 1, and that history is stale.
+    event(1, 'after restart');
+    await _until(() => store.entries.length == 1);
   });
 }
