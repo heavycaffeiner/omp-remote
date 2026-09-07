@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="OMPRemote">
+  <title>OMPRemote</title>
+
+  <!-- Android adaptive icon foreground: the glyph only, on a transparent
+       canvas, with the background supplied separately as a flat color. The
+       system masks this layer to its own shape and can shift it while
+       animating, so the mark is scaled into the centre safe zone rather than
+       drawn full bleed. -->
+  <g transform="translate(512 512) scale(0.66) translate(-512 -512)">
+    <g fill="none" stroke="#fafafa" stroke-width="78" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 300 330 H 724"/>
+      <path d="M 424 330 V 596"/>
+      <path d="M 626 330 V 554 q 0 42 42 42 h 28"/>
+    </g>
+    <g fill="none" stroke="#fafafa" stroke-linecap="round" opacity="0.5" stroke-width="54">
+      <path d="M 596 700 a 122 122 0 0 1 -84 34 a 122 122 0 0 1 -84 -34"/>
+      <path d="M 692 786 a 258 258 0 0 1 -180 74 a 258 258 0 0 1 -180 -74"/>
+    </g>
+  </g>
+</svg>

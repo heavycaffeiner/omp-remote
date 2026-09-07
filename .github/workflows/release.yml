@@ -132,6 +132,9 @@ jobs:
           test -f android/app/src/main/res/drawable-xxxhdpi/ic_notification.png
           test -f android/app/src/main/res/drawable-mdpi/ic_notification.png
           test -f android/app/src/main/res/raw/keep.xml
+          # A generated icon that is present but invisible passes every test
+          # above, which is how a white square once shipped.
+          dart run tool/check_icons.dart
       - run: flutter build apk --release
         working-directory: app
 

@@ -84,5 +84,6 @@ jobs:
         run: |
           dart run flutter_launcher_icons
           dart run tool/generate_notification_icon.dart
+          dart run tool/check_icons.dart
       - run: flutter build apk --profile
         working-directory: app
