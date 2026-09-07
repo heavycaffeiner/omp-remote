@@ -1,8 +1,8 @@
 # omp-remote
 
-Drive a running [omp](https://github.com/oh-my-pi) coding session from your
-phone. Read the stream as it happens, send prompts, and answer the questions
-the agent would otherwise ask at your keyboard.
+Drive a running [oh-my-pi](https://github.com/can1357/oh-my-pi) coding session
+from your phone. Read the stream as it happens, send prompts, and answer the
+questions the agent would otherwise ask at your keyboard.
 
 | Directory | What it is                                                          |
 | --------- | ------------------------------------------------------------------- |

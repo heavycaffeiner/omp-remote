@@ -137,6 +137,11 @@ jobs:
     needs: [relay-image, apk]
     runs-on: ubuntu-latest
     steps:
+      # The image is tagged by docker/metadata-action's semver pattern, which
+      # strips the leading v. The git tag keeps it.
+      - name: Derive the image tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v5
         with:
           name: apk
@@ -169,5 +174,5 @@ jobs:
               -e OMP_RELAY_AGENT_TOKEN=... \
               -e OMP_RELAY_CONTROL_TOKEN=... \
               -e OMP_RELAY_VIEWER_TOKEN=... \
-              ghcr.io/${{ github.repository_owner }}/omp-remote-relay:${{ github.ref_name }}
+              ghcr.io/${{ github.repository_owner }}/omp-remote-relay:${{ steps.version.outputs.value }}
             ```
