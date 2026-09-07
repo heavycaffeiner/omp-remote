@@ -36,9 +36,9 @@ downstream re-reads the environment.
 | `OMP_REMOTE_CONTROL_TOKEN`    | unset                             | Relay's `OMP_RELAY_CONTROL_TOKEN`. Only used to build a relay control pairing link. |
 | `OMP_REMOTE_VIEWER_TOKEN`     | unset                             | Relay's `OMP_RELAY_VIEWER_TOKEN`. Only used to build a relay viewer pairing link. |
 | `OMP_REMOTE_LOCAL`            | `1` (enabled)                     | Set to `0` to disable the plugin's own local WebSocket server.          |
-| `OMP_REMOTE_LOCAL_PORT`       | `8788`                            | Port the local server listens on.                                       |
+| `OMP_REMOTE_LOCAL_PORT`       | `8788`                            | First port the local server tries. A taken port moves up, scanning 16. |
 | `OMP_REMOTE_LOCAL_BIND`       | `0.0.0.0`                         | Bind address for the local server.                                      |
-| `OMP_REMOTE_AGENT_ID`         | `<hostname>/<cwd basename>`       | Agent id advertised in `hello`/roster entries and pairing links.        |
+| `OMP_REMOTE_AGENT_ID`         | `<hostname>/<cwd basename>#<pid>` | Agent id advertised in `hello`/roster entries and pairing links.        |
 | `OMP_REMOTE_ALLOW_BASH`       | `0` (disabled)                    | Set to `1` or `true` to allow the `bash` command to run real shell commands on this workstation. |
 | `OMP_REMOTE_REMOTE_APPROVAL`  | `0` (disabled)                    | Set to `1` or `true` to let an attached control client's `deny` answer block a tool call before it runs. |
 
@@ -63,8 +63,13 @@ tells you why nothing is reachable.
 
 ### `/remote-omp`
 
-Prints a pairing link and a terminal QR code for the Remote-OMP app
-(`docs/protocol.md`, "Pairing").
+Prints a terminal QR code, a six-character pairing code, and a link for the
+Remote-OMP app (`docs/protocol.md`, "Pairing").
+
+The code is what makes pairing without a camera bearable: six characters typed
+into the app instead of a 64-character token copied by hand. It is redeemed at
+`GET /pair?code=...`, works once, and expires after five minutes. Relay
+pairing has no code, since a relayed client cannot reach the local server.
 
 - Bare (`/remote-omp`): a **control** link. Direct is preferred whenever the
   local server is up; falls back to relay otherwise.
@@ -113,9 +118,14 @@ The plugin runs its own WebSocket server (`OMP_REMOTE_LOCAL_PORT`, default
 `8788`) serving `/client`, `/pair`, and `/healthz` exactly as
 `docs/protocol.md` specifies for the plugin's local server. Two tokens are
 minted at server startup, one for `control` and one for `viewer`, and handed
-out only through the `/pair` payload or a `/remote-omp` pairing link, never
+out only through a redeemed pairing code or a `/remote-omp` link, never
 logged. Use this on a LAN or over Tailscale, where the phone can already
 reach the workstation directly; no relay or third party is involved.
+
+Several sessions coexist: each takes the next free port in a 16-port range
+from the configured one, and `GET /pair` without a code names the session's
+working directory, so a client sweeping that range lists them all. Discovery
+opens no additional port.
 
 ## Interactive requests
 

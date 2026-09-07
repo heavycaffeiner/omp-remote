@@ -43,6 +43,19 @@ so the app's code path is identical: only the URL differs.
 Both transports may run at once. A session can be relayed and directly
 reachable at the same time.
 
+### Several sessions on one workstation
+
+Each omp session serves its own local server. The configured port is a
+starting point: a session that finds it taken moves up, scanning 16 ports, so
+a second session comes up beside the first instead of failing. A transport
+that cannot start at all is reported and left dormant, never escalated into a
+session error.
+
+Agent ids are distinct per session, since a relay treats a repeated id as a
+reconnect and evicts the older connection. The default appends a short
+process-derived suffix to host and directory, as in
+`kim-thinkpad/omp-remote#k69j`.
+
 ## Endpoints
 
 Relay:
@@ -132,14 +145,48 @@ workstation's own screen and is not logged, and the QR is not written to disk.
 `/remote-omp viewer` emits a viewer link instead of a control link, which is the
 one to hand to someone who should only watch.
 
-`GET /pair` on the local server returns the same payload as JSON for clients
-that would rather fetch it than scan:
+### Pairing codes
 
-```jsonc
-{ "v": 2, "t": "direct", "url": "ws://100.64.0.3:8788", "role": "control", "name": "omp-remote" }
+Copying a 64-character token by hand is the fallback nobody wants, so the local
+server also issues a short code standing for one. `/remote-omp` prints it
+alongside the QR.
+
+A code is six characters from `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, Crockford
+base32 without `I`, `L`, `O`, and `U`, so no two characters are confusable when
+read off one screen and typed into another. It is single use and expires five
+minutes after being issued. Those two properties are what make six characters
+enough: an attacker gets one guess per issued code out of 32^6.
+
+```
+GET /pair?code=HZE6VD
 ```
 
-It never includes a token. The token only travels in the QR or the link.
+```jsonc
+{ "v": 2, "t": "direct", "url": "ws://100.64.0.3:8788", "name": "omp-remote",
+  "agent": "kim-thinkpad/omp-remote#k69j", "cwd": "/home/kim/proj",
+  "role": "control", "token": "0266e40e..." }
+```
+
+An unknown, reused, or expired code gets `404` with
+`{"error": "unknown or expired pairing code"}`. Codes are direct-only: a
+relayed client cannot reach the local server to redeem one.
+
+### Discovery
+
+`GET /pair` without a code returns the same payload minus `token` and `role`.
+It opens no listener of its own, so a client finds the sessions on a host by
+asking each port the server's own scan range covers, 8788 through 8803, and
+keeping the replies that parse with `v` of `2`. `cwd` is what distinguishes two
+sessions on one workstation.
+
+```jsonc
+{ "v": 2, "t": "direct", "url": "ws://100.64.0.3:8788", "name": "omp-remote",
+  "agent": "kim-thinkpad/omp-remote#k69j", "cwd": "/home/kim/proj",
+  "role": "control" }
+```
+
+No token appears in a codeless response. The token travels only in the QR, the
+link, or a redeemed code.
 
 ## Frame envelope
 

@@ -118,18 +118,36 @@ Start omp with the plugin loaded, then:
 /remote-omp
 ```
 
-A QR code and a pairing link appear. Scan the code with the app and you are
-connected. The link carries the address, a token, and the role, so there is
-nothing to type.
+A QR code appears. Scan it with the app and you are connected.
+
+If the camera is not an option, the same output carries a six-character code:
 
 ```
-/remote-omp viewer    a read-only link, for someone who should only watch
+    Address:  100.64.0.3:8788
+    Code:     HZE6VD
+```
+
+In the app choose "Enter a code" and type those. The code works once and
+expires in five minutes. This beats copying a 64-character token by hand,
+which is what the raw link would otherwise ask of you.
+
+```
+/remote-omp viewer    a read-only code and link, for someone who should only watch
 /remote-omp relay     force the relay form even when direct is available
 /remote               transport status: what is connected and who is attached
 ```
 
 The plugin picks a reachable address for you, preferring Tailscale, then your
 LAN. When several would work it prints them all and you pick.
+
+### Several sessions at once
+
+Run omp in as many directories as you like. Each session takes its own port,
+starting at 8788 and moving up, and identifies itself distinctly, so a phone
+can hold them all and switch between them. The app finds them by asking each
+port in that range who is there; nothing extra is listening for discovery.
+
+On a relay every session appears in one roster and you pick from it.
 
 ### What you can do from the phone
 
