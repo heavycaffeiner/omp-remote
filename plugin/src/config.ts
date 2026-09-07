@@ -29,10 +29,14 @@ export interface RemoteConfig {
 	remoteApproval: boolean;
 }
 
+// Host and directory alone collide when two sessions run in the same project,
+// and on a relay the second registration evicts the first. A short suffix from
+// the process id keeps them distinct while staying readable in a roster.
 function defaultAgentId(): string {
 	const host = os.hostname();
 	const base = path.basename(process.cwd());
-	return `${host}/${base}`;
+	const suffix = process.pid.toString(36).slice(-4);
+	return `${host}/${base}#${suffix}`;
 }
 
 function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {

@@ -30,6 +30,20 @@ const MAX_OUTBOUND_QUEUE = 256;
 const PING_INTERVAL_MS = 20000;
 const READ_TIMEOUT_SECONDS = 60;
 const EVENT_RING_SIZE = 512;
+// How many consecutive ports to try before giving up, so concurrent sessions
+// on one workstation each get their own server.
+const PORT_SCAN_RANGE = 16;
+const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
+// Crockford base32 without I, L, O, and U: no character pair a person can
+// confuse while reading a code off one screen and typing it into another.
+const PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+function randomPairingCode(): string {
+	const bytes = crypto.randomBytes(6);
+	let out = "";
+	for (const byte of bytes) out += PAIRING_CODE_ALPHABET[byte % PAIRING_CODE_ALPHABET.length];
+	return out;
+}
 
 interface ConnectionState {
 	role: Role;
@@ -78,6 +92,7 @@ export class LocalServer {
 	private readonly eventRing: CoreEvent[] = [];
 	private controlCount = 0;
 	private viewerCount = 0;
+	private readonly pairingCodes = new Map<string, { role: Role; expiresAt: number }>();
 
 	constructor(bridge: SessionBridge, config: RemoteConfig, pi: ExtensionAPI) {
 		this.bridge = bridge;
@@ -110,32 +125,82 @@ export class LocalServer {
 		return { control: this.controlCount, viewer: this.viewerCount };
 	}
 
+	// Issues a short code that can be typed into the app in place of copying a
+	// 64-character token. It is single-use and short-lived, which is what makes
+	// six characters enough: an attacker gets one guess per code out of 32^6.
+	issuePairingCode(role: Role): { code: string; expiresAt: number } {
+		this.prunePairingCodes();
+		let code = "";
+		do {
+			code = randomPairingCode();
+		} while (this.pairingCodes.has(code));
+		const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
+		this.pairingCodes.set(code, { role, expiresAt });
+		return { code, expiresAt };
+	}
+
+	private prunePairingCodes(): void {
+		const now = Date.now();
+		for (const [code, entry] of this.pairingCodes) {
+			if (entry.expiresAt <= now) this.pairingCodes.delete(code);
+		}
+	}
+
+	// Consumes a code and returns the token it stands for. Deleting before
+	// checking expiry keeps a stale code from being retried.
+	private redeemPairingCode(code: string): { token: string; role: Role } | undefined {
+		const normalized = code.trim().toUpperCase();
+		const entry = this.pairingCodes.get(normalized);
+		if (!entry) return undefined;
+		this.pairingCodes.delete(normalized);
+		if (entry.expiresAt <= Date.now()) return undefined;
+		return {
+			token: entry.role === "control" ? this.tokens.control : this.tokens.viewer,
+			role: entry.role,
+		};
+	}
+
+	// Tries the configured port, then the next few. Several omp sessions on one
+	// workstation each want their own server, and the second one starting must
+	// not take the whole session down over a port the first one already holds.
 	start(): void {
 		if (this.server) return;
 		if (!this.config.local) throw new Error("LocalServer requires config.local");
 		const localConfig = this.config.local;
 
-		this.server = Bun.serve<ConnectionState>({
+		const options = {
 			hostname: localConfig.bind,
-			port: localConfig.port,
 			// Bun's own idle-timeout knob, in seconds; matches the protocol's
 			// 60-second read timeout for HTTP connections (the WebSocket ping
 			// interval below enforces the same budget on open sockets).
 			idleTimeout: READ_TIMEOUT_SECONDS,
-			fetch: (req, server) => this.handleFetch(req, server),
+			fetch: (req: Request, server: Server<ConnectionState>) => this.handleFetch(req, server),
 			websocket: {
 				maxPayloadLength: MAX_INBOUND_BYTES,
 				idleTimeout: READ_TIMEOUT_SECONDS,
-				open: (ws) => this.handleOpen(ws),
-				message: (ws, message) => this.handleMessage(ws, message),
-				close: (ws) => this.handleClose(ws),
-				drain: (ws) => {
-					// Backpressure has cleared: the client has caught up, so the
-					// approximate too-slow counter resets.
+				open: (ws: LocalWebSocket) => this.handleOpen(ws),
+				message: (ws: LocalWebSocket, message: string | Buffer) => this.handleMessage(ws, message),
+				close: (ws: LocalWebSocket) => this.handleClose(ws),
+				drain: (ws: LocalWebSocket) => {
 					ws.data.backpressureStreak = 0;
 				},
 			},
-		});
+		};
+
+		let lastError: unknown;
+		for (let port = localConfig.port; port < localConfig.port + PORT_SCAN_RANGE; port++) {
+			try {
+				this.server = Bun.serve<ConnectionState>({ ...options, port });
+				return;
+			} catch (err) {
+				lastError = err;
+			}
+		}
+		throw new Error(
+			`no free port in ${localConfig.port}..${localConfig.port + PORT_SCAN_RANGE - 1}: ${
+				lastError instanceof Error ? lastError.message : String(lastError)
+			}`,
+		);
 	}
 
 	stop(): void {
@@ -170,16 +235,30 @@ export class LocalServer {
 			return new Response("ok", { status: 200 });
 		}
 
+		// Doubles as the discovery endpoint: a client sweeping the port range
+		// gets one of these per live session, which is why it carries cwd. No
+		// extra listener is opened for discovery. Without a code the payload
+		// holds no secret; with one it returns the token that code stands for,
+		// so the app needs six typed characters instead of a 64-character token.
 		if (url.pathname === "/pair") {
 			if (!this.config.local) return new Response("not found", { status: 404 });
-			const payload = {
+			const base = {
 				v: PROTOCOL_VERSION,
 				t: "direct" as const,
 				url: `ws://${this.pairingHost()}:${this.port}`,
-				role: "control" as const,
 				name: this.config.agentName,
+				agent: this.bridge.agentId,
+				cwd: this.bridge.info.cwd,
 			};
-			return Response.json(payload);
+
+			const code = url.searchParams.get("code");
+			if (code === null) return Response.json({ ...base, role: "control" as const });
+
+			const redeemed = this.redeemPairingCode(code);
+			if (!redeemed) {
+				return Response.json({ error: "unknown or expired pairing code" }, { status: 404 });
+			}
+			return Response.json({ ...base, role: redeemed.role, token: redeemed.token });
 		}
 
 		if (url.pathname === "/client") {

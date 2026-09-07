@@ -52,9 +52,26 @@ export default function ompRemote(pi: ExtensionAPI): void {
 	const localServer = config.local ? new LocalServer(bridge, config, pi) : undefined;
 	const alwaysApprovedTools = new Set<string>();
 
-	pi.on("session_start", async () => {
-		relayClient?.start();
-		localServer?.start();
+	// A transport that cannot start is this extension's problem, not the
+	// session's. Record it and stay dormant on that transport instead of
+	// throwing out of the handler, which would surface as a session error.
+	let localStarted = false;
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			relayClient?.start();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			bridge.recordError(`relay: ${message}`);
+			ctx.ui.notify(`omp-remote relay uplink failed: ${message}`, "warning");
+		}
+		try {
+			localServer?.start();
+			localStarted = localServer !== undefined;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			bridge.recordError(`local server: ${message}`);
+			ctx.ui.notify(`omp-remote local server failed: ${message}`, "warning");
+		}
 	});
 
 	registerRemoteOmpCommand(pi, bridge, config, () => localServer);
@@ -71,13 +88,13 @@ export default function ompRemote(pi: ExtensionAPI): void {
 				lines.push("relay: not configured");
 			}
 
-			if (config.local) {
-				const counts = localServer?.clientCounts ?? { control: 0, viewer: 0 };
-				lines.push(
-					`local: port ${localServer?.port ?? config.local.port} (control ${counts.control}, viewer ${counts.viewer})`,
-				);
-			} else {
+			if (!config.local) {
 				lines.push("local: not configured");
+			} else if (!localStarted) {
+				lines.push("local: not running");
+			} else {
+				const counts = localServer?.clientCounts ?? { control: 0, viewer: 0 };
+				lines.push(`local: port ${localServer?.port} (control ${counts.control}, viewer ${counts.viewer})`);
 			}
 
 			const attached = bridge.getCurrentState().viewers;

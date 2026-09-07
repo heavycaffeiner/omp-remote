@@ -147,7 +147,7 @@ export function registerRemoteOmpCommand(
 ): void {
 	const bridge = _bridge;
 	pi.registerCommand("remote-omp", {
-		description: "Print a pairing link and QR code for the Remote-OMP app",
+		description: "Pair the Remote-OMP app with this session",
 		handler: async (argsText, ctx) => {
 			const arg = argsText.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 			const role: "control" | "viewer" = arg === "viewer" ? "viewer" : "control";
@@ -158,7 +158,7 @@ export function registerRemoteOmpCommand(
 
 			const tokenResult = resolvePairingToken(role, transport, config, local);
 			if ("error" in tokenResult) {
-				ctx.ui.notify(`Cannot build a pairing link: ${tokenResult.error}`, "error");
+				ctx.ui.notify(`Cannot pair: ${tokenResult.error}`, "error");
 				return;
 			}
 
@@ -169,27 +169,48 @@ export function registerRemoteOmpCommand(
 
 			if (candidates.length === 0) {
 				ctx.ui.notify(
-					"Cannot build a pairing link: no reachable network address found (only loopback/link-local interfaces present)",
+					"Cannot pair: no reachable network address found (only loopback and link-local interfaces present)",
 					"error",
 				);
 				return;
 			}
 
+			const primary = candidates[0] as PairingTarget;
 			const links = candidates.map((candidate) =>
 				buildPairingLink(candidate, tokenResult.token, role, bridge.agentId, bridge.info.name),
 			);
 			const primaryLink = links[0] as string;
 			const qr = await renderQr(primaryLink);
 
-			const roleLabel = role === "viewer" ? "Viewer (read-only)" : "Control";
-			const lines = [`${roleLabel} pairing link (${(candidates[0] as PairingTarget).label}):`, primaryLink];
+			const roleLabel = role === "viewer" ? "Viewer, read-only" : "Control";
+			const lines = [`${roleLabel} pairing for ${bridge.agentId}`, "", qr];
+
+			// Typing six characters beats copying a 64-character token by hand,
+			// which is the only other option when the QR cannot be scanned.
+			// Relay pairing has no code: the code is redeemed from the local
+			// server, which a relayed client cannot reach.
+			if (transport === "direct" && local) {
+				const issued = local.issuePairingCode(role);
+				const minutes = Math.round((issued.expiresAt - Date.now()) / 60000);
+				lines.push(
+					"Cannot scan? In the app choose Enter a code, then type:",
+					"",
+					`    Address:  ${primary.url.replace(/^ws:\/\//, "")}`,
+					`    Code:     ${issued.code}`,
+					"",
+					`The code works once and expires in ${minutes} minutes.`,
+				);
+			} else {
+				lines.push("Cannot scan? Open this link on the device:", "", primaryLink);
+			}
+
 			if (links.length > 1) {
-				lines.push("", "Other reachable addresses:");
+				lines.push("", "Other addresses for this workstation:");
 				for (let i = 1; i < links.length; i++) {
-					lines.push(`  ${(candidates[i] as PairingTarget).label}: ${links[i]}`);
+					const target = candidates[i] as PairingTarget;
+					lines.push(`  ${target.label}: ${target.url.replace(/^ws:\/\//, "")}`);
 				}
 			}
-			lines.push("", qr);
 
 			// UI notification only: never appended to the session transcript and
 			// never sent to the model, unlike pi.sendMessage/sendUserMessage. The
