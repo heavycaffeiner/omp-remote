@@ -82,6 +82,11 @@ Tailscale address and a LAN address on the same machine), every candidate is
 printed, ranked Tailscale first, then private LAN ranges, then anything
 else; the QR code always encodes the first (best-ranked) one.
 
+A session that lost the race for the port asks the host for a code and a
+client token over the loopback `/join` endpoint, so every session is pairable
+and not just the one that started first. Its output names the session to pick
+from the app's list.
+
 Relay pairing needs a client-facing secret that the relay operator issues,
 which is not the same credential the plugin dials the relay with. Set
 `OMP_REMOTE_CONTROL_TOKEN` to the relay's `OMP_RELAY_CONTROL_TOKEN`, and

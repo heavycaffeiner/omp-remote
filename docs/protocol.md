@@ -86,7 +86,7 @@ Plugin, whichever session holds the port:
 | `/client`  | GET    | WebSocket upgrade for an OMPRemote app        |
 | `/agent`   | GET    | Another session on this machine, loopback only |
 | `/pair`    | GET    | Pairing payload and roster, see Pairing       |
-| `/join`    | GET    | Agent token for a local session, loopback only |
+| `/join`    | GET    | Tokens for a local session, loopback only     |
 | `/healthz` | GET    | Liveness probe, returns `ok`                  |
 
 ## Roles
@@ -178,13 +178,49 @@ GET /pair?code=HZE6VD
 
 ```jsonc
 { "v": 2, "t": "direct", "url": "ws://100.64.0.3:8788", "name": "omp-remote",
-  "agent": "kim-thinkpad/omp-remote#k69j", "cwd": "/home/kim/proj",
+  "agent": "kim-thinkpad/omp-remote#k69j",
+  "agents": [
+    { "agentId": "kim-thinkpad/omp-remote#k69j", "name": "omp-remote" },
+    { "agentId": "kim-thinkpad/api#m2rx", "name": "api" }
+  ],
   "role": "control", "token": "0266e40e..." }
 ```
+
+A redeemed payload is the discovery payload plus the token, so the client
+that redeems a code learns every session on the workstation and picks the one
+it was pointed at. Working directories are absent here for the same reason
+they are absent from discovery.
 
 An unknown, reused, or expired code gets `404` with
 `{"error": "unknown or expired pairing code"}`. Codes are direct-only: a
 relayed client cannot reach the local server to redeem one.
+
+### Pairing from a guest session
+
+A session that lost the race for the port has no server, so it cannot issue a
+code or a token of its own. It asks the host for both over `/join`, and prints
+them as if it had. Without this only the session that happened to start first
+would be pairable.
+
+```
+GET /join?code=control
+```
+
+```jsonc
+{ "v": 2, "token": "<agent token>", "code": "HZE6VD", "expiresAt": 1788546521,
+  "url": "ws://100.64.0.3:8788", "role": "control",
+  "clientToken": "0266e40e..." }
+```
+
+`token` is the agent token, which is what a guest dials `/agent` with.
+`clientToken` is the client token for the requested role, so the guest can
+print a working QR rather than one that cannot authenticate. Both are secrets
+the host already holds, and the endpoint is loopback only, so a guest learns
+nothing a process on the same machine could not read from the config.
+
+The guest builds its link against a reachable interface, not the address the
+host reports. A host that bound loopback reports `127.0.0.1`, which no phone
+can dial.
 
 ### Discovery
 
