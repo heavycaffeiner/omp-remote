@@ -139,10 +139,19 @@ jobs:
           body: |
             ## Install
 
+            **Plugin.** This is the only required piece.
+
+            ```sh
+            omp plugin install github:heavycaffeiner/omp-remote#${{ github.ref_name }}
+            ```
+
+            Then run `/remote-omp` in a session and scan the QR code.
+
             **App.** Download the APK below and install it on Android. For iOS,
             build from source: the repository has no Apple signing identity.
 
-            **Relay.** Only needed when the phone cannot reach the workstation.
+            **Relay.** Only needed when the phone cannot reach the workstation
+            directly. Built for `linux/amd64` and `linux/arm64`.
 
             ```sh
             docker run -d -p 8787:8787 \
@@ -151,8 +160,3 @@ jobs:
               -e OMP_RELAY_VIEWER_TOKEN=... \
               ghcr.io/${{ github.repository_owner }}/omp-remote-relay:${{ github.ref_name }}
             ```
-
-            Built for `linux/amd64` and `linux/arm64`.
-
-            **Plugin.** Clone the repository, `bun install` in `plugin/`, then
-            load it with `omp --extension /path/to/omp-remote/plugin`.
