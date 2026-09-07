@@ -178,7 +178,7 @@ async function dispatch(
 			);
 		case "run_command":
 			return fail(
-				"run_command has no invocation path: ExtensionAPI.getCommands() lists commands but exposes no execute method",
+				"run_command has no invocation path: ExtensionAPI exposes no way to execute a slash command, and the prompt path sends the text to the model verbatim instead of expanding it",
 			);
 
 		default:

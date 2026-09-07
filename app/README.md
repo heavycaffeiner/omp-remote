@@ -3,8 +3,9 @@
 Flutter client for the omp-remote wire protocol (see `../docs/protocol.md`).
 Connects to an omp session either through the relay or directly to the
 plugin's local WebSocket server, and lets you read the transcript, send
-prompts, answer interactive requests, and reach the rest of omp's command
-surface from a phone.
+prompts, answer interactive requests, and change session settings from a
+phone. Slash commands are listed for reference but run at the workstation:
+the extension API has no way to invoke one remotely.
 
 Targets Android and iOS. The `android/` and `ios/` directories are
 regenerable with `flutter create --platforms=android,ios .`; only the two

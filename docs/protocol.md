@@ -418,14 +418,14 @@ Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 
 | `cmd`         | `args`                | Reply `data`                     |
 | ------------- | --------------------- | -------------------------------- |
-| `run_command` | `{ name, args? }`     | `{ accepted: true }`             |
 | `bash`        | `{ command }`         | `{ id }`, output as `bash_output` events |
 | `abort_bash`  | `{ id }`              | `{ aborted: true }`              |
 
-`run_command` invokes a slash command by name, which is how the app reaches
-anything omp exposes as a command without the protocol enumerating it. The name
-is validated against the list `commands` returns; an unknown name is rejected
-rather than passed through.
+There is no command that invokes a slash command remotely. The extension API
+exposes no method to execute one, and submitting `/name` through the prompt
+path was tested and does not work: it reaches the model as literal text
+instead of being expanded. `commands` still lists what the session has, which
+is useful to read, but running one is a workstation action.
 
 `bash` is a remote shell on the workstation. It runs only for a `control`
 connection and is refused when the plugin is started with

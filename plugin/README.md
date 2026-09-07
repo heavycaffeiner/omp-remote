@@ -201,9 +201,11 @@ no-op'ing or calling something that would throw at runtime:
   handler's own context, not the `ExtensionContext` a command dispatched off
   a `command` wire frame runs with. `new_session` and `switch_session` fail
   the same way and for the same reason.
-- `run_command`: `ExtensionAPI.getCommands()` lists registered slash
-  commands but exposes no method to invoke one; there is no invocation path
-  to wire this onto at all.
+
+- `run_command`: `ExtensionAPI` exposes no method to execute a slash
+  command. Submitting `/name` through the prompt path was tried and does not
+  work: the text reaches the model verbatim instead of being expanded, so
+  the command never runs. `commands` still lists what the session has.
 
 `compact` and reading commands (`state`, `history`, `tools`, `commands`,
 `models`, `system_prompt`) are unaffected: `ExtensionContext` exposes

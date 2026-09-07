@@ -117,10 +117,10 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 
-  void _openCommandPalette() {
+  void _openCommandReference() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CommandPaletteScreen(relayClient: widget.relayClient),
+        builder: (_) => CommandReferenceScreen(relayClient: widget.relayClient),
       ),
     );
   }
@@ -137,11 +137,11 @@ class _SessionScreenState extends State<SessionScreen> {
           if (_canControl)
             Semantics(
               button: true,
-              label: 'Open command palette',
+              label: 'View slash command reference',
               child: IconButton(
                 icon: const Icon(Icons.terminal),
-                onPressed: _openCommandPalette,
-                tooltip: 'Command palette',
+                onPressed: _openCommandReference,
+                tooltip: 'Slash command reference',
               ),
             ),
           Semantics(

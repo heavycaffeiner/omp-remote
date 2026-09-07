@@ -3,19 +3,20 @@ import 'package:flutter/material.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
 
-/// Lists the session's real slash commands (from the `commands` command) and
-/// invokes one via `run_command`. This is what makes the rest of omp's
-/// surface reachable without the app hardcoding every feature.
-class CommandPaletteScreen extends StatefulWidget {
-  const CommandPaletteScreen({required this.relayClient, super.key});
+/// Read-only reference for the session's slash commands (from the
+/// `commands` command). The extension API exposes no way to invoke a slash
+/// command remotely, so this screen only lists what exists; it does not
+/// offer to run anything. Any command must be typed at the workstation.
+class CommandReferenceScreen extends StatefulWidget {
+  const CommandReferenceScreen({required this.relayClient, super.key});
 
   final RelayClient relayClient;
 
   @override
-  State<CommandPaletteScreen> createState() => _CommandPaletteScreenState();
+  State<CommandReferenceScreen> createState() => _CommandReferenceScreenState();
 }
 
-class _CommandPaletteScreenState extends State<CommandPaletteScreen> {
+class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
   List<SlashCommandInfo> _commands = const [];
   bool _loading = true;
   String? _error;
@@ -49,21 +50,6 @@ class _CommandPaletteScreenState extends State<CommandPaletteScreen> {
     }
   }
 
-  Future<void> _runCommand(SlashCommandInfo command) async {
-    try {
-      await widget.relayClient.sendCommand(
-        CommandName.runCommand,
-        args: {'name': command.name},
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Command failed: $e')));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final filtered = _filter.isEmpty
@@ -75,10 +61,22 @@ class _CommandPaletteScreenState extends State<CommandPaletteScreen> {
               .toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Command palette')),
+      appBar: AppBar(title: const Text('Slash commands')),
       body: SafeArea(
         child: Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  'These are the slash commands available in this session. '
+                  'The app has no way to run one remotely: type it at the '
+                  'workstation keyboard.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: TextField(
@@ -121,16 +119,14 @@ class _CommandPaletteScreenState extends State<CommandPaletteScreen> {
                         itemBuilder: (context, index) {
                           final command = filtered[index];
                           return Semantics(
-                            button: true,
                             label:
-                                'Run /${command.name}${command.description != null ? ', ${command.description}' : ''}',
+                                '/${command.name}${command.description != null ? ', ${command.description}' : ''}. Run this at the workstation, not from the app.',
                             child: ListTile(
                               leading: const Icon(Icons.terminal),
                               title: Text('/${command.name}'),
                               subtitle: command.description != null
                                   ? Text(command.description!)
                                   : null,
-                              onTap: () => _runCommand(command),
                             ),
                           );
                         },

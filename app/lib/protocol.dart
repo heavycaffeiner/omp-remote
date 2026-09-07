@@ -717,7 +717,6 @@ enum CommandName {
   branch,
   compact,
   setSessionName,
-  runCommand,
   bash,
   abortBash,
 }
@@ -779,8 +778,6 @@ extension CommandNameWire on CommandName {
         return 'compact';
       case CommandName.setSessionName:
         return 'set_session_name';
-      case CommandName.runCommand:
-        return 'run_command';
       case CommandName.bash:
         return 'bash';
       case CommandName.abortBash:

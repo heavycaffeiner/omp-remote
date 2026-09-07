@@ -5,8 +5,8 @@ import '../relay_client.dart';
 import '../session_store.dart';
 
 /// Frequently used session settings, reachable directly rather than through
-/// the command palette: model picker, thinking level, compaction, session
-/// lifecycle, and todos. Disabled entirely for a viewer connection.
+/// the slash command reference: model picker, thinking level, compaction,
+/// session lifecycle, and todos. Disabled entirely for a viewer connection.
 class SessionMenuSheet extends StatefulWidget {
   const SessionMenuSheet({
     required this.relayClient,

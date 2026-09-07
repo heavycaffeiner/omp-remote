@@ -201,7 +201,9 @@ class RelayClient {
   }
 
   String _describeError(Object error) {
-    if (error is WebSocketChannelException) return error.message ?? 'websocket error';
+    if (error is WebSocketChannelException) {
+      return error.message ?? 'websocket error';
+    }
     return error.toString();
   }
 

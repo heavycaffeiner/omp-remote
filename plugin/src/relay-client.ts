@@ -53,7 +53,6 @@ export class RelayClient implements OutboundSink {
 	private welcomed = false;
 	private backoffMs = BACKOFF_INITIAL_MS;
 	private reconnectTimer: Timer | undefined;
-	private usingQueryTokenAuth = false;
 
 	constructor(bridge: SessionBridge, config: RemoteConfig, pi: ExtensionAPI) {
 		this.bridge = bridge;
@@ -67,12 +66,6 @@ export class RelayClient implements OutboundSink {
 
 	get connected(): boolean {
 		return this.welcomed && this.socket !== undefined && this.socket.readyState === WebSocket.OPEN;
-	}
-
-	// True once the header-auth WebSocket constructor call has thrown and the
-	// ?token= query-parameter fallback was used instead, for status reporting.
-	get usingQueryToken(): boolean {
-		return this.usingQueryTokenAuth;
 	}
 
 	start(): void {
@@ -97,19 +90,9 @@ export class RelayClient implements OutboundSink {
 
 	private connect(): void {
 		if (this.stopped) return;
-		let socket: WebSocket;
-		try {
-			// Bun's WebSocket client accepts headers via the options object; this
-			// is the primary auth path. If a runtime does not support it, the
-			// ?token= query fallback below is exercised instead.
-			socket = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.token}` } });
-			this.usingQueryTokenAuth = false;
-		} catch {
-			const withToken = new URL(this.url);
-			withToken.searchParams.set("token", this.token);
-			socket = new WebSocket(withToken.toString());
-			this.usingQueryTokenAuth = true;
-		}
+		// Bun's WebSocket client sends the Authorization header on the upgrade
+		// request. A query token would land in relay and proxy access logs.
+		const socket = new WebSocket(this.url, { headers: { Authorization: `Bearer ${this.token}` } });
 		this.socket = socket;
 		this.welcomed = false;
 
