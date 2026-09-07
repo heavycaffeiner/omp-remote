@@ -101,6 +101,10 @@ export class SessionBridge {
 	/// trigger a second pass over the same branch.
 	historyReplayed = false;
 	private readonly queue: QueuedMessage[] = [];
+
+	/// Write-tool arguments held between `tool_execution_start` and its end,
+	/// because the result carries neither the content nor a diff.
+	private readonly pendingWrites = new Map<string, { path: string; content: string }>();
 	private queueSeq = 0;
 	private readonly connectedAt = Date.now();
 	private readonly bashProcesses = new Map<string, AbortController>();
@@ -481,9 +485,21 @@ export class SessionBridge {
 			this.updateCtx(ctx);
 			this.broadcastEvent(buildMessageEvent(event.message));
 		});
-
 		pi.on("tool_execution_start", async (event, ctx) => {
 			this.updateCtx(ctx);
+			// `write` reports no diff and no path in its result, so its
+			// arguments are kept until the call ends and the diff is built
+			// from them.
+			if (event.toolName === "write") {
+				const args = event.args;
+				if (args && typeof args === "object" && "path" in args && "content" in args) {
+					const path = args.path;
+					const content = args.content;
+					if (typeof path === "string" && typeof content === "string") {
+						this.pendingWrites.set(event.toolCallId, { path, content });
+					}
+				}
+			}
 			this.broadcastEvent({
 				k: "tool_start",
 				id: event.toolCallId,
@@ -501,7 +517,17 @@ export class SessionBridge {
 		});
 		pi.on("tool_execution_end", async (event, ctx) => {
 			this.updateCtx(ctx);
-			this.broadcastEvent(buildToolEndEvent(event.toolCallId, event.toolName, event.result, event.isError));
+			const written = this.pendingWrites.get(event.toolCallId);
+			this.pendingWrites.delete(event.toolCallId);
+			this.broadcastEvent(
+				buildToolEndEvent(
+					event.toolCallId,
+					event.toolName,
+					event.result,
+					event.isError,
+					written,
+				),
+			);
 		});
 
 		pi.on("todo_reminder", async (event, ctx) => {

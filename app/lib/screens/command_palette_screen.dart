@@ -4,10 +4,11 @@ import '../protocol.dart';
 import '../relay_client.dart';
 import '../theme.dart';
 
-/// Read-only reference for the session's slash commands (from the
-/// `commands` command). The extension API exposes no way to invoke a slash
-/// command remotely, so this screen only lists what exists; it does not
-/// offer to run anything. Any command must be typed at the workstation.
+/// Every slash command the session knows, from the `commands` command.
+/// A command whose work the plugin can also do carries a `remote` wire
+/// command; tapping it runs that instead of opening the workstation picker.
+/// The rest are reference only: the extension API exposes no way to invoke a
+/// slash command, so they have to be typed at the workstation.
 class CommandReferenceScreen extends StatefulWidget {
   const CommandReferenceScreen({required this.relayClient, super.key});
 
@@ -133,27 +134,39 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
                         itemCount: filtered.length,
                         itemBuilder: (context, index) {
                           final command = filtered[index];
+                          final runnable = command.remote != null;
+                          final where = runnable
+                              ? 'Runs from the app.'
+                              : 'Runs at the workstation only.';
                           final label = command.description != null
                               ? '/${command.name}, ${command.description}'
                               : '/${command.name}';
                           return Semantics(
-                            label:
-                                '$label. From ${command.source}. Run this at the workstation, not from the app.',
+                            button: runnable,
+                            label: '$label. From ${command.source}. $where',
                             child: ListTile(
                               leading: Icon(_iconFor(command.source)),
                               title: Text('/${command.name}'),
                               subtitle: command.description != null
                                   ? Text(command.description!)
                                   : null,
-                              trailing: Text(
-                                command.source,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: Theme.of(
+                              trailing: runnable
+                                  ? const Icon(Icons.play_circle_outline)
+                                  : Text(
+                                      command.source,
+                                      style: Theme.of(
                                         context,
-                                      ).colorScheme.onSurfaceVariant,
+                                      ).textTheme.labelSmall?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
                                     ),
-                              ),
+                              onTap: runnable
+                                  ? () => Navigator.of(
+                                      context,
+                                    ).pop(command.remote)
+                                  : null,
                             ),
                           );
                         },

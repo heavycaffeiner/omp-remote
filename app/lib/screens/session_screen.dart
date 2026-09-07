@@ -199,12 +199,44 @@ class _SessionScreenState extends State<SessionScreen>
     );
   }
 
-  void _openCommandReference() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+  Future<void> _openCommandReference() async {
+    final remote = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
         builder: (_) => CommandReferenceScreen(relayClient: widget.relayClient),
       ),
     );
+    if (remote == null || !mounted) return;
+    await _runRemoteEquivalent(remote);
+  }
+
+  /// Opens the app's own surface for a picker command, or runs the command
+  /// outright when it takes no choice.
+  Future<void> _runRemoteEquivalent(String remote) async {
+    switch (remote) {
+      case 'set_model':
+      case 'set_todos':
+      case 'set_active_tools':
+      case 'compact':
+      case 'set_session_name':
+        _openMenu();
+      case 'list_sessions':
+        _openSwitcher();
+      case 'jobs':
+      case 'state':
+      case 'history':
+      case 'commands':
+        // Already on screen: the state header, subagent panel, and
+        // transcript carry what these dashboards show.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('That view is already on this screen.'),
+          ),
+        );
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No app equivalent for $remote.')),
+        );
+    }
   }
 
   void _openSwitcher() async {

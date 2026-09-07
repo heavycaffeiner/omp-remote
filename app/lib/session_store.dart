@@ -23,6 +23,8 @@ class TranscriptEntry {
     this.toolName,
     this.toolInput,
     this.toolOk,
+    this.diff,
+    this.path,
     this.open = false,
     this.level,
   });
@@ -35,6 +37,10 @@ class TranscriptEntry {
   final String? toolName;
   final Object? toolInput;
   bool? toolOk;
+
+  /// Unified diff of the file this call changed, when it changed one.
+  String? diff;
+  String? path;
 
   /// True while a streaming block or a tool call has not yet finalized.
   bool open;
@@ -289,6 +295,8 @@ class SessionStore extends ChangeNotifier {
         if (entry != null) {
           entry.text = event.text;
           entry.toolOk = event.ok;
+          entry.diff = event.diff;
+          entry.path = event.path;
           entry.open = false;
           entry.touch();
         } else {
@@ -299,6 +307,8 @@ class SessionStore extends ChangeNotifier {
               toolName: event.name,
               text: event.text,
               toolOk: event.ok,
+              diff: event.diff,
+              path: event.path,
               open: false,
             ),
           );

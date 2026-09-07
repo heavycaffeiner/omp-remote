@@ -3,7 +3,7 @@
 
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { Model, TextContent, ThinkingContent } from "@oh-my-pi/pi-ai";
-import type { ModelRef, RemoteEvent } from "./protocol-types.js";
+import type { EvToolEnd, ModelRef, RemoteEvent } from "./protocol-types.js";
 
 export const TOOL_INPUT_MAX_BYTES = 4096;
 export const TEXT_MAX_BYTES = 16384;
@@ -95,14 +95,51 @@ export function buildMessageEvent(message: AgentMessage): RemoteEvent {
 	};
 }
 
-export function buildToolEndEvent(id: string, name: string, result: unknown, isError: boolean): RemoteEvent {
-	return {
+const DIFF_MAX_BYTES = 65536;
+
+// The edit tool already produces a unified diff and reports the path it
+// touched; `write` reports neither, so its added content is rendered as an
+// all-additions diff instead of leaving the app with only a byte count.
+export function buildToolEndEvent(
+	id: string,
+	name: string,
+	result: unknown,
+	isError: boolean,
+	written?: { path: string; content: string },
+): EvToolEnd {
+	const event: EvToolEnd = {
 		k: "tool_end",
 		id,
 		name,
 		ok: !isError,
 		text: truncateText(extractToolResultText(result), TEXT_MAX_BYTES),
 	};
+
+	const details = field(result, "details");
+	const path = stringField(details, "path") || stringField(details, "resolvedPath");
+	if (path.length > 0) event.path = path;
+	const sourcePath = stringField(details, "sourcePath");
+	if (sourcePath.length > 0) event.sourcePath = sourcePath;
+
+	const diff = stringField(details, "diff");
+	if (diff.length > 0) {
+		event.diff = truncateText(diff, DIFF_MAX_BYTES);
+		return event;
+	}
+
+	// A write reports no diff, so its content is rendered as all additions.
+	// The content lives in the call's arguments, not the result.
+	const newText = stringField(details, "newText") || written?.content;
+	if (newText !== undefined && newText.length > 0) {
+		event.diff = truncateText(asAdditions(newText), DIFF_MAX_BYTES);
+		if (event.path === undefined && written !== undefined) event.path = written.path;
+	}
+	return event;
+}
+
+function asAdditions(text: string): string {
+	const lines = text.split("\n");
+	return [`@@ -0,0 +1,${lines.length} @@`, ...lines.map((line) => `+${line}`)].join("\n");
 }
 
 // `notice`, `model_changed`, and `thinking_changed` wire events have no

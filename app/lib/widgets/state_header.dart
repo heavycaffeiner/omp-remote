@@ -62,7 +62,9 @@ class _StateHeaderState extends State<StateHeader> {
         ? null
         : (state.compacting
               ? Icons.compress
-              : (state.streaming ? Icons.graphic_eq : Icons.check_circle_outline));
+              : (state.streaming
+                    ? Icons.graphic_eq
+                    : Icons.check_circle_outline));
 
     final usage = state?.contextUsage;
 
@@ -150,7 +152,13 @@ class _StateHeaderState extends State<StateHeader> {
                   Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.xs,
-                    children: _buildDetailChips(theme, status, state, activityIcon, activityText),
+                    children: _buildDetailChips(
+                      theme,
+                      status,
+                      state,
+                      activityIcon,
+                      activityText,
+                    ),
                   ),
                   if (usage != null) ...[
                     const SizedBox(height: AppSpacing.sm),
@@ -201,7 +209,10 @@ class _StateHeaderState extends State<StateHeader> {
     if (state != null) {
       if (state.model != null) {
         chips.add(
-          _StatusChip(icon: Icons.smart_toy_outlined, label: state.model!.label),
+          _StatusChip(
+            icon: Icons.smart_toy_outlined,
+            label: state.model!.label,
+          ),
         );
       }
       if (state.thinkingLevel != null) {

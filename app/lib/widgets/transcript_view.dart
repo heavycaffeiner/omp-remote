@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../session_store.dart';
 import '../theme.dart';
+import 'diff_view.dart';
+import 'markdown_text.dart';
 
 /// Renders the transcript. Only rebuilds the whole list when entries are
 /// added or removed (driven by [SessionStore.transcriptRevision]); each row
@@ -295,8 +297,8 @@ class _TaggedBlock extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.xs),
-          SelectableText(
-            text,
+          MarkdownText(
+            text: text,
             style: theme.textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
@@ -360,8 +362,8 @@ class _MessageRow extends StatelessWidget {
                     if (segment.tag != null)
                       _TaggedBlock(tag: segment.tag!, text: segment.text)
                     else if (segment.text.isNotEmpty)
-                      SelectableText(
-                        segment.text,
+                      MarkdownText(
+                        text: segment.text,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: scheme.onSurface,
                         ),
@@ -481,8 +483,8 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
               top: AppSpacing.xs,
               bottom: AppSpacing.xs,
             ),
-            child: SelectableText(
-              widget.text,
+            child: MarkdownText(
+              text: widget.text,
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: quietColor, fontStyle: FontStyle.italic),
             ),
@@ -597,6 +599,25 @@ class _ToolCardState extends State<_ToolCard> {
                       ],
                     ),
                   ),
+                  // A file change is the point of the call, so its diff shows
+                  // whether the card is expanded or not.
+                  if (entry.diff != null && entry.diff!.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    if (entry.path != null)
+                      Text(
+                        entry.path!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: monospaceStyle(
+                          context,
+                        ).copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    const SizedBox(height: AppSpacing.xs),
+                    DiffView(
+                      diff: entry.diff!,
+                      maxHeight: _expanded ? 420 : 200,
+                    ),
+                  ],
                   if (_expanded) ...[
                     const SizedBox(height: AppSpacing.sm),
                     if (formattedInput.isNotEmpty) ...[
@@ -661,8 +682,8 @@ class _NoticeLine extends StatelessWidget {
             Icon(icon, size: 16, color: color),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: SelectableText(
-                entry.text,
+              child: MarkdownText(
+                text: entry.text,
                 style: theme.textTheme.bodySmall?.copyWith(color: color),
               ),
             ),

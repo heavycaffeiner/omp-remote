@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../protocol.dart';
 import '../session_store.dart';
 import '../theme.dart';
+import 'markdown_text.dart';
 
 /// A prominent, pinned card for one pending interactive request. Dismissible
 /// only by answering (or by the request timing out or being cancelled
@@ -210,7 +211,7 @@ class _SelectBody extends StatelessWidget {
           Text(request.title, style: theme.textTheme.titleSmall),
           if (request.message.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xs),
-            SelectableText(request.message),
+            MarkdownText(text: request.message),
           ],
           const SizedBox(height: AppSpacing.sm),
           for (var i = 0; i < request.options.length; i++) ...[
@@ -277,7 +278,7 @@ class _ConfirmBody extends StatelessWidget {
           Text(request.title, style: theme.textTheme.titleSmall),
           if (request.message.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xs),
-            SelectableText(request.message),
+            MarkdownText(text: request.message),
           ],
           const SizedBox(height: AppSpacing.sm),
           Row(
@@ -354,7 +355,7 @@ class _InputBodyState extends State<_InputBody> {
           Text(widget.request.title, style: theme.textTheme.titleSmall),
           if (widget.request.message.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xs),
-            SelectableText(widget.request.message),
+            MarkdownText(text: widget.request.message),
           ],
           const SizedBox(height: AppSpacing.sm),
           Semantics(
@@ -561,8 +562,7 @@ class _ApprovalBody extends StatelessWidget {
               const SizedBox(height: AppSpacing.sm),
               Semantics(
                 button: true,
-                label:
-                    'Do not object once. The workstation still has to confirm this locally.',
+                label: 'Do not object once. The workstation still has to confirm this locally.',
                 child: OutlinedButton.icon(
                   onPressed: disabled
                       ? null
@@ -574,8 +574,7 @@ class _ApprovalBody extends StatelessWidget {
               const SizedBox(height: AppSpacing.sm),
               Semantics(
                 button: true,
-                label:
-                    'Do not object to this tool from now on. The workstation still has to confirm each time locally.',
+                label: 'Do not object to this tool from now on. The workstation still has to confirm each time locally.',
                 child: OutlinedButton.icon(
                   onPressed: disabled
                       ? null

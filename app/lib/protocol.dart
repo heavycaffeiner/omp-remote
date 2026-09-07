@@ -541,6 +541,9 @@ sealed class SessionEvent {
           name: asString(map['name']) ?? '',
           ok: asBool(map['ok']) ?? false,
           text: asString(map['text']) ?? '',
+          path: asString(map['path']),
+          diff: asString(map['diff']),
+          sourcePath: asString(map['sourcePath']),
         );
       case 'todos':
         return TodosEvent(todos: TodoItem.listFromJson(map['todos']));
@@ -651,11 +654,23 @@ class ToolEndEvent extends SessionEvent {
     required this.name,
     required this.ok,
     required this.text,
+    this.path,
+    this.diff,
+    this.sourcePath,
   });
   final String id;
   final String name;
   final bool ok;
   final String text;
+
+  /// File the call changed, when it changed exactly one.
+  final String? path;
+
+  /// Unified diff of that change.
+  final String? diff;
+
+  /// Pre-move path, set only when the edit renamed the file.
+  final String? sourcePath;
 }
 
 class TodosEvent extends SessionEvent {
@@ -868,22 +883,13 @@ const List<String> thinkingLevels = [
   'xhigh',
   'max',
 ];
-const List<String> steeringModes = ['all', 'one-at-a-time'];
-const List<String> interruptModes = ['immediate', 'wait'];
-
-class CommandReply {
-  const CommandReply({required this.ok, this.data, this.error});
-
-  final bool ok;
-  final Object? data;
-  final String? error;
-}
 
 class SlashCommandInfo {
   const SlashCommandInfo({
     required this.name,
     required this.source,
     this.description,
+    this.remote,
   });
 
   final String name;
@@ -893,6 +899,10 @@ class SlashCommandInfo {
   final String source;
   final String? description;
 
+  /// Wire command that does the same work from here, when one exists. Absent
+  /// means the command only runs at the workstation.
+  final String? remote;
+
   static SlashCommandInfo? fromJson(Object? json) {
     final map = asMap(json);
     final name = asString(map['name']);
@@ -901,6 +911,7 @@ class SlashCommandInfo {
       name: name,
       source: asString(map['source']) ?? 'unknown',
       description: asString(map['description']),
+      remote: asString(map['remote']),
     );
   }
 

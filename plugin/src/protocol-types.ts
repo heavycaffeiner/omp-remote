@@ -53,6 +53,17 @@ export interface EvToolEnd {
 	name: string;
 	ok: boolean;
 	text: string;
+
+	/// File the call changed, when it changed exactly one.
+	path?: string;
+
+	/// Unified diff of the change, as the edit tool itself produced it. A
+	/// `write` has no prior text to diff against on create, so this carries
+	/// the added lines instead.
+	diff?: string;
+
+	/// Set when the edit moved the file; `path` is the destination.
+	sourcePath?: string;
 }
 export interface EvTodos {
 	k: "todos";

@@ -126,6 +126,8 @@ async function dispatch(
 			return cmdModels(bridge);
 		case "system_prompt":
 			return cmdSystemPrompt(bridge);
+		case "jobs":
+			return cmdJobs(bridge);
 
 		case "set_model":
 			return cmdSetModel(bridge, pi, args);
@@ -377,18 +379,75 @@ function cmdTools(pi: ExtensionAPI): CommandResult {
 	return ok({ active: pi.getActiveTools(), all: pi.getAllTools().map((t) => t.name) });
 }
 
+// Backs the app's equivalent of /jobs, /hub, and /agents: the same snapshot
+// those dashboards read.
+function cmdJobs(bridge: SessionBridge): CommandResult {
+	const ctxResult = requireCtx(bridge);
+	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
+	const snapshot = ctxResult.getAsyncJobSnapshot();
+	if (!snapshot) return ok({ running: [], recent: [] });
+	const summarize = (item: { id: string; type: string; status: string; label?: string; startTime?: number; agentId?: string }) => ({
+		id: item.id,
+		type: item.type,
+		status: item.status,
+		...(item.label !== undefined ? { label: item.label } : {}),
+		...(item.startTime !== undefined ? { startTime: item.startTime } : {}),
+		...(item.agentId !== undefined ? { agentId: item.agentId } : {}),
+	});
+	return ok({
+		running: snapshot.running.map(summarize),
+		recent: snapshot.recent.map(summarize),
+	});
+}
+
+// A builtin slash command that opens a picker on the workstation, mapped to
+// the wire command that does the same work here. The app renders its own
+// picker for these; everything absent from this table is workstation-only,
+// because the APIs those commands need (`AgentSession`, `Settings`,
+// `ExtensionCommandContext`) are not reachable from an extension.
+const REMOTE_EQUIVALENT: Record<string, string> = {
+	agents: "jobs",
+	commands: "commands",
+	compact: "compact",
+	context: "state",
+	dump: "history",
+	hub: "jobs",
+	jobs: "jobs",
+	model: "set_model",
+	models: "set_model",
+	rename: "set_session_name",
+	resume: "list_sessions",
+	session: "list_sessions",
+	sessions: "list_sessions",
+	switch: "set_model",
+	todo: "set_todos",
+	tools: "set_active_tools",
+	usage: "state",
+};
+
 // `pi.getCommands()` deliberately omits builtins: it exists so an extension
 // can discover the dynamic commands it did not register, and each frontend
 // prepends its own builtin list. The app is such a frontend, so it needs
 // both or its palette shows only extension, prompt, and skill commands.
 function cmdCommands(pi: ExtensionAPI): CommandResult {
 	const seen = new Set<string>();
-	const commands: Array<{ name: string; description?: string; source: string }> = [];
+	const commands: Array<{
+		name: string;
+		description?: string;
+		source: string;
+		remote?: string;
+	}> = [];
 
 	for (const builtin of BUILTIN_SLASH_COMMAND_DEFS) {
 		if (seen.has(builtin.name)) continue;
 		seen.add(builtin.name);
-		commands.push({ name: builtin.name, description: builtin.description, source: "builtin" });
+		const remote = REMOTE_EQUIVALENT[builtin.name];
+		commands.push({
+			name: builtin.name,
+			description: builtin.description,
+			source: "builtin",
+			...(remote !== undefined ? { remote } : {}),
+		});
 	}
 	for (const dynamic of pi.getCommands()) {
 		if (seen.has(dynamic.name)) continue;
