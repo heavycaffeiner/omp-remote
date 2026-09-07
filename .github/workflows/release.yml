@@ -105,6 +105,27 @@ jobs:
 
       - run: flutter pub get
         working-directory: app
+
+      # The android platform folder was just regenerated from `flutter create`,
+      # so the launcher icon needs regenerating too: it lives under
+      # android/app/src/main/res, which is gitignored and not restored above.
+      - name: Generate the launcher icon
+        working-directory: app
+        run: |
+          dart run flutter_launcher_icons
+          # A silent failure here ships Flutter's default icon, which looks
+          # like a successful build until someone installs it.
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+
+      # Same reason: res/drawable is regenerated and gitignored. ImageMagick is
+      # not on the runner, so the mark is drawn by a Dart tool instead.
+      - name: Generate the notification icon
+        working-directory: app
+        run: |
+          dart run tool/generate_notification_icon.dart
+          test -f android/app/src/main/res/drawable-xxxhdpi/ic_notification.png
+          test -f android/app/src/main/res/drawable-mdpi/ic_notification.png
       - run: flutter build apk --release
         working-directory: app
 

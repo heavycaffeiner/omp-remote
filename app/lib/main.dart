@@ -7,6 +7,7 @@ import 'pairing.dart';
 import 'profile_store.dart';
 import 'screens/connection_screen.dart';
 import 'screens/pairing_review_screen.dart';
+import 'theme.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -77,43 +78,13 @@ class _RemoteOmpAppState extends State<RemoteOmpApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
-      title: 'Remote-OMP',
+      title: 'OMPRemote',
       debugShowCheckedModeBanner: false,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
       themeMode: ThemeMode.system,
       home: ConnectionScreen(profileStore: widget.profileStore),
     );
   }
 }
 
-ThemeData _buildTheme(Brightness brightness) {
-  final isDark = brightness == Brightness.dark;
-  final seed = const Color(0xFF2F6FED);
-  final scheme = ColorScheme.fromSeed(
-    seedColor: seed,
-    brightness: brightness,
-  ).copyWith(error: isDark ? const Color(0xFFFF8A80) : const Color(0xFFB3261E));
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: scheme,
-    brightness: brightness,
-    scaffoldBackgroundColor: scheme.surface,
-    appBarTheme: AppBarTheme(
-      backgroundColor: scheme.surface,
-      foregroundColor: scheme.onSurface,
-      elevation: 0,
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      border: const OutlineInputBorder(),
-      filled: true,
-      fillColor: isDark
-          ? scheme.surfaceContainerHighest
-          : scheme.surfaceContainerLow,
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(minimumSize: const Size(64, 48)),
-    ),
-    visualDensity: VisualDensity.adaptivePlatformDensity,
-  );
-}

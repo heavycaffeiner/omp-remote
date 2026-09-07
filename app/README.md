@@ -1,4 +1,4 @@
-# Remote-OMP
+# OMPRemote
 
 Flutter client for the omp-remote wire protocol (see `../docs/protocol.md`).
 Connects to an omp session either through the relay or directly to the
@@ -11,10 +11,21 @@ Targets Android and iOS. The `android/` and `ios/` directories are
 regenerable with `flutter create --platforms=android,ios .`; only the two
 files carrying hand-written configuration are checked in, namely
 `android/app/src/main/AndroidManifest.xml` (the `remote-omp://pair` intent
-filter) and `ios/Runner/Info.plist` (the same scheme under
-`CFBundleURLTypes`, plus the camera usage string the QR scanner needs).
-Regenerating the rest is safe; regenerating those two loses the pairing
-entry points.
+filter and the app label) and `ios/Runner/Info.plist` (the same scheme
+under `CFBundleURLTypes`, the camera usage string the QR scanner needs,
+and the display name). Regenerating the rest is safe; regenerating those
+two loses the pairing entry points and the display name.
+
+The launcher icon is generated from `assets/icon/omp-remote.svg` (source
+of truth) and `assets/icon/omp-remote.png` (a 1024x1024 raster of it, plus
+`assets/icon/omp-remote-foreground.png`, the glyph alone inset to the
+centre 66 percent for the Android adaptive icon foreground) using the
+`flutter_launcher_icons` dev dependency configured in `pubspec.yaml`. The
+generated files under `android/app/src/main/res` and
+`ios/Runner/Assets.xcassets` are gitignored along with the rest of the
+regenerable platform folders, so after `flutter create` regenerates
+`android/`, run `dart run flutter_launcher_icons` again to put the icon
+back; the release workflow does this automatically.
 
 ## Running on Android
 

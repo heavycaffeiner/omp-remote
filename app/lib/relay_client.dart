@@ -174,7 +174,7 @@ class RelayClient {
       await channel.ready;
     } catch (e) {
       if (generation != _generation) return;
-      _handleDisconnect('connection failed: ${_describeError(e)}');
+      _handleDisconnect(_describeConnectError(e));
       return;
     }
 
@@ -200,11 +200,39 @@ class RelayClient {
     );
   }
 
+  /// Message for a stream error or close on an already-established
+  /// connection (a lost connection, not a failed one).
   String _describeError(Object error) {
     if (error is WebSocketChannelException) {
       return error.message ?? 'websocket error';
     }
     return error.toString();
+  }
+
+  /// Classifies a failure from the initial connect attempt into the cause
+  /// that needs its own fix: the host never answered, something answered
+  /// but refused the port, or something answered and rejected the token.
+  /// dart:io's `WebSocket.connect` reports a non-101 HTTP response as a
+  /// `WebSocketException` carrying the status code, and reports a
+  /// transport-level failure as the underlying `SocketException`'s message;
+  /// both arrive here wrapped in `WebSocketChannelException.message`.
+  String _describeConnectError(Object error) {
+    if (error is TimeoutException) {
+      return 'host unreachable: connection timed out';
+    }
+    final message = error is WebSocketChannelException
+        ? (error.message ?? error.toString())
+        : error.toString();
+    if (message.contains('HTTP status code: 401')) {
+      return 'token rejected: the server did not accept this token';
+    }
+    if (message.contains('Failed host lookup')) {
+      return 'host unreachable: could not resolve the address';
+    }
+    if (message.contains('Connection refused')) {
+      return 'port refused: nothing is listening on that port';
+    }
+    return 'connection failed: $message';
   }
 
   void _handleMessage(int generation, Object? raw) {
@@ -230,9 +258,16 @@ class RelayClient {
             clearError: true,
           ),
         );
-        if (profile.agentId != null) {
-          _sendSubscribe(profile.agentId!);
-        }
+        // A relay connection carries an explicit target in `profile.agentId`.
+        // A direct connection never does (it is always exactly one agent), so
+        // the sole roster entry becomes the target. This goes through
+        // subscribeToAgent rather than _sendSubscribe because commands and
+        // request answers read profile.agentId, and leaving it null makes a
+        // direct connection receive events but refuse to send anything.
+        final target =
+            profile.agentId ??
+            (frame.agents.length == 1 ? frame.agents.single.agentId : null);
+        if (target != null) subscribeToAgent(target);
       case AgentsFrame():
         _setStatus((s) => s.copyWith(agents: frame.agents));
       case EventFrame():
@@ -270,9 +305,19 @@ class RelayClient {
     _setStatus((s) => s.copyWith(subscribedAgentId: agentId));
   }
 
-  /// Subscribes to a different agent (relay mode only). Clears local seq
-  /// tracking for a clean history replay.
+  void _sendUnsubscribe(String agentId) {
+    final channel = _channel;
+    if (channel == null) return;
+    channel.sink.add(jsonEncode(buildUnsubscribeFrame(agentId: agentId)));
+  }
+
+  /// Switches the target agent: unsubscribes the previous one (if any and
+  /// if different), subscribes to the new one, and resets local seq
+  /// tracking so the new agent's history replays from the start. Used both
+  /// for a relay roster switch and to pin a direct connection's one agent.
   void subscribeToAgent(String agentId) {
+    final previous = _status.subscribedAgentId;
+    final changed = previous != agentId;
     profile = ConnectionProfile(
       url: profile.url,
       token: profile.token,
@@ -280,8 +325,13 @@ class RelayClient {
       agentId: agentId,
       name: profile.name,
     );
-    _highestSeq = 0;
+    // Only a genuine switch starts from scratch. Resetting on a reconnect to
+    // the same agent would replay the whole retained buffer as if it were new.
+    if (changed) _highestSeq = 0;
     if (_status.phase == ConnectionPhase.connected) {
+      if (previous != null && changed) {
+        _sendUnsubscribe(previous);
+      }
       _sendSubscribe(agentId);
     }
   }

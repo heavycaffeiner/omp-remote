@@ -4,13 +4,15 @@ import '../pairing.dart';
 import '../profile_store.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
+import 'pairing_code_screen.dart';
 import 'pairing_review_screen.dart';
 import 'qr_scan_screen.dart';
 import 'session_screen.dart';
 
-/// Entry screen: pick a saved connection, scan a pairing QR code, or enter a
-/// relay/direct URL and token by hand. No session content is ever shown
-/// here; there is nothing to display until a connection is established.
+/// Entry screen: pick a saved connection, scan a pairing QR code, enter a
+/// short pairing code, or enter a relay/direct URL and token by hand. No
+/// session content is ever shown here; there is nothing to display until a
+/// connection is established.
 class ConnectionScreen extends StatefulWidget {
   const ConnectionScreen({required this.profileStore, super.key});
 
@@ -48,12 +50,14 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     super.dispose();
   }
 
-  void _connectWithProfile(SavedProfile saved) {
+  Future<void> _connectWithProfile(SavedProfile saved) async {
     final uri = Uri.tryParse(saved.url);
     if (uri == null) {
       _showError('Saved connection has an invalid URL.');
       return;
     }
+    await widget.profileStore.recordUsed(saved.id);
+    if (!mounted) return;
     final profile = ConnectionProfile(
       url: uri,
       token: saved.token,
@@ -111,7 +115,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     _tokenController.clear();
     setState(() => _showManualForm = false);
     _reloadProfiles();
-    _connectWithProfile(saved);
+    await _connectWithProfile(saved);
   }
 
   Future<void> _scanQr() async {
@@ -135,7 +139,67 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     }
   }
 
+  Future<void> _enterCode() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PairingCodeScreen(profileStore: widget.profileStore),
+      ),
+    );
+    if (mounted) _reloadProfiles();
+  }
+
+  Future<void> _renameProfile(SavedProfile profile) async {
+    final controller = TextEditingController(text: profile.label);
+    final newLabel = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename connection'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final trimmed = newLabel?.trim();
+    if (trimmed == null || trimmed.isEmpty) return;
+    await widget.profileStore.rename(profile.id, trimmed);
+    _reloadProfiles();
+  }
+
   Future<void> _deleteProfile(SavedProfile profile) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove connection'),
+        content: Text('Remove "${profile.label}"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await widget.profileStore.remove(profile.id);
     _reloadProfiles();
   }
@@ -143,7 +207,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Remote-OMP')),
+      appBar: AppBar(title: const Text('OMPRemote')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -160,20 +224,32 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'No saved connections yet. Pair with a QR code or add one manually below.',
+                  'No saved connections yet. Pair with a QR code, enter a '
+                  'code, or add one manually below.',
                 ),
               ),
             for (final profile in _profiles)
               _ProfileTile(
                 profile: profile,
                 onTap: () => _connectWithProfile(profile),
+                onRename: () => _renameProfile(profile),
                 onDelete: () => _deleteProfile(profile),
               ),
             const SizedBox(height: 24),
             Semantics(
               button: true,
-              label: 'Scan pairing QR code',
+              label: 'Enter a pairing code',
               child: ElevatedButton.icon(
+                onPressed: _enterCode,
+                icon: const Icon(Icons.dialpad),
+                label: const Text('Enter a code'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Semantics(
+              button: true,
+              label: 'Scan pairing QR code',
+              child: OutlinedButton.icon(
                 onPressed: _scanQr,
                 icon: const Icon(Icons.qr_code_scanner),
                 label: const Text('Scan QR to pair'),
@@ -283,38 +359,62 @@ class _ProfileTile extends StatelessWidget {
   const _ProfileTile({
     required this.profile,
     required this.onTap,
+    required this.onRename,
     required this.onDelete,
   });
 
   final SavedProfile profile;
   final VoidCallback onTap;
+  final VoidCallback onRename;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final roleLabel = profile.role == ClientRole.control ? 'Control' : 'Viewer';
+    final transportLabel = profile.isDirect ? 'Direct' : 'Relay';
+    final agentLine = profile.remoteAgentId ?? profile.agentId;
+    final subtitleLines = [
+      '$transportLabel, role: $roleLabel',
+      ?agentLine,
+      ?profile.cwd,
+    ];
     return Card(
       child: ListTile(
         leading: Icon(
           profile.role == ClientRole.control ? Icons.edit : Icons.visibility,
         ),
         title: Text(profile.label),
-        subtitle: Text(
-          '${profile.url}\nExpected role: $roleLabel',
-          maxLines: 2,
-        ),
+        subtitle: Text(subtitleLines.join('\n'), maxLines: 3),
         isThreeLine: true,
         onTap: onTap,
         trailing: Semantics(
           button: true,
-          label: 'Remove ${profile.label}',
-          child: IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: onDelete,
-            tooltip: 'Remove ${profile.label}',
+          label: 'Connection options for ${profile.label}',
+          child: PopupMenuButton<_ProfileAction>(
+            tooltip: 'Connection options for ${profile.label}',
+            onSelected: (action) {
+              switch (action) {
+                case _ProfileAction.rename:
+                  onRename();
+                case _ProfileAction.delete:
+                  onDelete();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _ProfileAction.rename,
+                child: Text('Rename'),
+              ),
+              PopupMenuItem(
+                value: _ProfileAction.delete,
+                child: Text('Remove'),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+enum _ProfileAction { rename, delete }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../relay_client.dart';
+import '../theme.dart';
 
 /// Read-only reference for the session's slash commands (from the
 /// `commands` command). The extension API exposes no way to invoke a slash
@@ -66,7 +67,12 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md,
+                0,
+              ),
               child: Semantics(
                 liveRegion: true,
                 child: Text(
@@ -79,7 +85,7 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpacing.md),
               child: TextField(
                 decoration: const InputDecoration(
                   labelText: 'Filter commands',
@@ -96,15 +102,21 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
               Expanded(
                 child: Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(AppSpacing.lg),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        Icon(
+                          Icons.error_outline,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
                         Text('Could not load commands: $_error'),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
+                        const SizedBox(height: AppSpacing.md),
+                        FilledButton.icon(
                           onPressed: _load,
-                          child: const Text('Retry'),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
                         ),
                       ],
                     ),

@@ -147,7 +147,7 @@ export function registerRemoteOmpCommand(
 ): void {
 	const bridge = _bridge;
 	pi.registerCommand("remote-omp", {
-		description: "Pair the Remote-OMP app with this session",
+		description: "Pair the OMPRemote app with this session",
 		handler: async (argsText, ctx) => {
 			const arg = argsText.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 			const role: "control" | "viewer" = arg === "viewer" ? "viewer" : "control";

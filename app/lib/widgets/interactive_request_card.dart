@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../session_store.dart';
+import '../theme.dart';
 
 /// A prominent, pinned card for one pending interactive request. Dismissible
 /// only by answering (or by the request timing out or being cancelled
@@ -99,40 +100,90 @@ class _InteractiveRequestCardState extends State<InteractiveRequestCard> {
       liveRegion: true,
       container: true,
       child: Card(
-        color: theme.colorScheme.surfaceContainerHigh,
-        margin: const EdgeInsets.all(12),
+        color: theme.colorScheme.primaryContainer,
+        margin: const EdgeInsets.all(AppSpacing.md),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          side: BorderSide(color: theme.colorScheme.primary, width: 2),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
-                  Icon(Icons.priority_high, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
+                  Icon(
+                    Icons.priority_high,
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
                     child: Text(
                       'Agent needs an answer',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   if (_remaining != null)
-                    Text(
-                      _expired ? 'expired' : '${_remaining!.inSeconds}s',
-                      semanticsLabel: _expired
-                          ? 'timed out'
+                    Semantics(
+                      label: _expired
+                          ? 'Timed out'
                           : '${_remaining!.inSeconds} seconds remaining',
-                      style: theme.textTheme.labelMedium,
+                      excludeSemantics: true,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _expired
+                                ? Icons.timer_off_outlined
+                                : Icons.timer_outlined,
+                            size: 14,
+                            color: theme.colorScheme.onPrimaryContainer,
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            _expired ? 'expired' : '${_remaining!.inSeconds}s',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               body,
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Card body text and answer buttons render on the surface color (not the
+/// primary container background) so long content stays readable; only the
+/// card chrome uses the attention-getting primary container.
+class _BodySurface extends StatelessWidget {
+  const _BodySurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: child,
     );
   }
 }
@@ -150,43 +201,56 @@ class _SelectBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(request.title, style: Theme.of(context).textTheme.titleSmall),
-        if (request.message.isNotEmpty) Text(request.message),
-        const SizedBox(height: 8),
-        for (var i = 0; i < request.options.length; i++) ...[
-          if (i > 0) const SizedBox(height: 8),
-          Semantics(
-            button: true,
-            label:
-                request.options[i].label +
-                (request.options[i].description != null
-                    ? ', ${request.options[i].description}'
-                    : ''),
-            child: OutlinedButton(
-              onPressed: disabled ? null : () => onAnswer(selectResponse(i)),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(request.options[i].label),
-                    if (request.options[i].description != null)
-                      Text(
-                        request.options[i].description!,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                  ],
+    final theme = Theme.of(context);
+    return _BodySurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(request.title, style: theme.textTheme.titleSmall),
+          if (request.message.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            SelectableText(request.message),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          for (var i = 0; i < request.options.length; i++) ...[
+            if (i > 0) const SizedBox(height: AppSpacing.sm),
+            Semantics(
+              button: true,
+              label:
+                  request.options[i].label +
+                  (request.options[i].description != null
+                      ? ', ${request.options[i].description}'
+                      : ''),
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                ),
+                onPressed: disabled ? null : () => onAnswer(selectResponse(i)),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(request.options[i].label),
+                      if (request.options[i].description != null)
+                        Text(
+                          request.options[i].description!,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -204,43 +268,51 @@ class _ConfirmBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(request.title, style: Theme.of(context).textTheme.titleSmall),
-        if (request.message.isNotEmpty) Text(request.message),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Semantics(
-                button: true,
-                label: 'Confirm ${request.title}',
-                child: ElevatedButton(
-                  onPressed: disabled
-                      ? null
-                      : () => onAnswer(confirmResponse(true)),
-                  child: const Text('Yes'),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Semantics(
-                button: true,
-                label: 'Decline ${request.title}',
-                child: OutlinedButton(
-                  onPressed: disabled
-                      ? null
-                      : () => onAnswer(confirmResponse(false)),
-                  child: const Text('No'),
-                ),
-              ),
-            ),
+    final theme = Theme.of(context);
+    return _BodySurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(request.title, style: theme.textTheme.titleSmall),
+          if (request.message.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            SelectableText(request.message),
           ],
-        ),
-      ],
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: 'Confirm ${request.title}',
+                  child: FilledButton.icon(
+                    onPressed: disabled
+                        ? null
+                        : () => onAnswer(confirmResponse(true)),
+                    icon: const Icon(Icons.check),
+                    label: const Text('Yes'),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: 'Decline ${request.title}',
+                  child: OutlinedButton.icon(
+                    onPressed: disabled
+                        ? null
+                        : () => onAnswer(confirmResponse(false)),
+                    icon: const Icon(Icons.close),
+                    label: const Text('No'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -273,38 +345,46 @@ class _InputBodyState extends State<_InputBody> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          widget.request.title,
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        if (widget.request.message.isNotEmpty) Text(widget.request.message),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _controller,
-          enabled: !widget.disabled,
-          textCapitalization: TextCapitalization.sentences,
-          textInputAction: TextInputAction.done,
-          decoration: InputDecoration(hintText: widget.request.placeholder),
-          onSubmitted: widget.disabled
-              ? null
-              : (value) => widget.onAnswer(valueResponse(value)),
-        ),
-        const SizedBox(height: 8),
-        Semantics(
-          button: true,
-          label: 'Submit answer',
-          child: ElevatedButton(
-            onPressed: widget.disabled
-                ? null
-                : () => widget.onAnswer(valueResponse(_controller.text)),
-            child: const Text('Submit'),
+    final theme = Theme.of(context);
+    return _BodySurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(widget.request.title, style: theme.textTheme.titleSmall),
+          if (widget.request.message.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            SelectableText(widget.request.message),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          Semantics(
+            label: '${widget.request.title} input field',
+            textField: true,
+            child: TextField(
+              controller: _controller,
+              enabled: !widget.disabled,
+              textCapitalization: TextCapitalization.sentences,
+              textInputAction: TextInputAction.done,
+              decoration: InputDecoration(hintText: widget.request.placeholder),
+              onSubmitted: widget.disabled
+                  ? null
+                  : (value) => widget.onAnswer(valueResponse(value)),
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: AppSpacing.sm),
+          Semantics(
+            button: true,
+            label: 'Submit answer',
+            child: FilledButton.icon(
+              onPressed: widget.disabled
+                  ? null
+                  : () => widget.onAnswer(valueResponse(_controller.text)),
+              icon: const Icon(Icons.send),
+              label: const Text('Submit'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -337,40 +417,50 @@ class _EditorBodyState extends State<_EditorBody> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          widget.request.title,
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        if (widget.request.language != null)
-          Text('Language: ${widget.request.language}'),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _controller,
-          enabled: !widget.disabled,
-          maxLines: 8,
-          minLines: 4,
-          keyboardType: TextInputType.multiline,
-          textCapitalization: TextCapitalization.none,
-          autocorrect: false,
-          enableSuggestions: false,
-          style: const TextStyle(fontFamily: 'monospace'),
-        ),
-        const SizedBox(height: 8),
-        Semantics(
-          button: true,
-          label: 'Submit edited text',
-          child: ElevatedButton(
-            onPressed: widget.disabled
-                ? null
-                : () => widget.onAnswer(valueResponse(_controller.text)),
-            child: const Text('Submit'),
+    final theme = Theme.of(context);
+    return _BodySurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(widget.request.title, style: theme.textTheme.titleSmall),
+          if (widget.request.language != null)
+            Text(
+              'Language: ${widget.request.language}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          const SizedBox(height: AppSpacing.sm),
+          Semantics(
+            label: '${widget.request.title} editor field',
+            textField: true,
+            child: TextField(
+              controller: _controller,
+              enabled: !widget.disabled,
+              maxLines: 8,
+              minLines: 4,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.none,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: monospaceStyle(context),
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: AppSpacing.sm),
+          Semantics(
+            button: true,
+            label: 'Submit edited text',
+            child: FilledButton.icon(
+              onPressed: widget.disabled
+                  ? null
+                  : () => widget.onAnswer(valueResponse(_controller.text)),
+              icon: const Icon(Icons.send),
+              label: const Text('Submit'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -390,73 +480,114 @@ class _ApprovalBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final risk = request.risk;
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Tool approval: ${request.toolName}',
-          style: theme.textTheme.titleSmall,
-        ),
-        if (risk != null) Text('Risk: $risk'),
-        if (request.input != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            '${request.input}',
-            style: theme.textTheme.bodySmall,
-            maxLines: 6,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-        const SizedBox(height: 8),
-        Text(
-          'Deny actually blocks the tool. Allow and always do not approve it: '
-          'the workstation still has to confirm this locally at the keyboard.',
-          style: theme.textTheme.bodySmall,
-        ),
-        const SizedBox(height: 8),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Semantics(
-              button: true,
-              label: 'Deny this tool call. This actually blocks it.',
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.colorScheme.error,
-                  foregroundColor: theme.colorScheme.onError,
+    return _BodySurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.build_outlined,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  'Tool approval: ${request.toolName}',
+                  style: theme.textTheme.titleSmall,
                 ),
-                onPressed: disabled
-                    ? null
-                    : () => onAnswer(approvalResponse('deny')),
-                child: const Text('Deny (blocks it)'),
               ),
+            ],
+          ),
+          if (risk != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_outlined,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Text('Risk: $risk', style: theme.textTheme.bodySmall),
+              ],
             ),
-            const SizedBox(height: 8),
-            Semantics(
-              button: true,
-              label: 'Do not object once. The workstation still has to confirm this locally.',
-              child: OutlinedButton(
-                onPressed: disabled
-                    ? null
-                    : () => onAnswer(approvalResponse('allow')),
-                child: const Text('Do not object'),
+          ],
+          if (request.input != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-            ),
-            const SizedBox(height: 8),
-            Semantics(
-              button: true,
-              label: 'Do not object to this tool from now on. The workstation still has to confirm each time locally.',
-              child: OutlinedButton(
-                onPressed: disabled
-                    ? null
-                    : () => onAnswer(approvalResponse('always')),
-                child: const Text('Do not object (always)'),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SelectableText(
+                  '${request.input}',
+                  style: monospaceStyle(context),
+                ),
               ),
             ),
           ],
-        ),
-      ],
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'Deny actually blocks the tool. Allow and always do not approve it: '
+            'the workstation still has to confirm this locally at the keyboard.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Semantics(
+                button: true,
+                label: 'Deny this tool call. This actually blocks it.',
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: theme.colorScheme.error,
+                    foregroundColor: theme.colorScheme.onError,
+                  ),
+                  onPressed: disabled
+                      ? null
+                      : () => onAnswer(approvalResponse('deny')),
+                  icon: const Icon(Icons.block),
+                  label: const Text('Deny (blocks it)'),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Semantics(
+                button: true,
+                label:
+                    'Do not object once. The workstation still has to confirm this locally.',
+                child: OutlinedButton.icon(
+                  onPressed: disabled
+                      ? null
+                      : () => onAnswer(approvalResponse('allow')),
+                  icon: const Icon(Icons.check),
+                  label: const Text('Do not object'),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Semantics(
+                button: true,
+                label:
+                    'Do not object to this tool from now on. The workstation still has to confirm each time locally.',
+                child: OutlinedButton.icon(
+                  onPressed: disabled
+                      ? null
+                      : () => onAnswer(approvalResponse('always')),
+                  icon: const Icon(Icons.done_all),
+                  label: const Text('Do not object (always)'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

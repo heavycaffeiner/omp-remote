@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../session_store.dart';
+import '../theme.dart';
 
 /// Renders the transcript. Only rebuilds the whole list when entries are
 /// added or removed (driven by [SessionStore.transcriptRevision]); each row
@@ -50,16 +51,49 @@ class _TranscriptViewState extends State<TranscriptView> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return ValueListenableBuilder<int>(
       valueListenable: widget.sessionStore.transcriptRevision,
       builder: (context, revision, _) {
         final entries = widget.sessionStore.entries;
         if (entries.isEmpty) {
-          return const Center(child: Text('No messages yet.'));
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.xl),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.forum_outlined,
+                    size: 40,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    'No messages yet',
+                    style: theme.textTheme.titleSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Type a message in the composer below and send it to '
+                    'start the conversation.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
         }
         return ListView.builder(
           controller: _scrollController,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
           itemCount: entries.length,
           itemBuilder: (context, index) => _TranscriptRow(
             key: ValueKey(entries[index].id),
@@ -97,6 +131,63 @@ class _TranscriptRow extends StatelessWidget {
   }
 }
 
+/// A block of text rendered monospace with horizontal scroll instead of
+/// wrapping (for code, tool arguments, and tool output), and selectable.
+/// Wrapping it in an unconstrained horizontal scroller keeps long single
+/// lines intact instead of forcing them to break mid-token.
+class _CodeBlock extends StatelessWidget {
+  const _CodeBlock({required this.text, this.maxHeight});
+
+  final String text;
+  final double? maxHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final box = Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SelectableText(text, style: monospaceStyle(context)),
+      ),
+    );
+    if (maxHeight == null) return box;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight!),
+      child: SingleChildScrollView(child: box),
+    );
+  }
+}
+
+/// Renders a tool call's `input` payload as a short single-line summary for
+/// the collapsed header row.
+String _summarizeToolInput(Object? input) {
+  if (input == null) return '';
+  if (input is String) return input;
+  if (input is Map) {
+    return input.entries
+        .map((e) => '${e.key}: ${e.value}')
+        .join(', ');
+  }
+  if (input is List) return input.join(', ');
+  return input.toString();
+}
+
+/// Pretty-prints a tool's `input` payload for the expanded detail view.
+String _formatToolInput(Object? input) {
+  if (input == null) return '';
+  if (input is String) return input;
+  if (input is Map) {
+    return input.entries.map((e) => '${e.key}: ${e.value}').join('\n');
+  }
+  if (input is List) return input.map((e) => '- $e').join('\n');
+  return input.toString();
+}
+
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({required this.entry});
 
@@ -106,15 +197,23 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isUser = entry.role == 'user';
+    final isAssistant = entry.role == 'assistant';
     final bubbleColor = isUser
         ? theme.colorScheme.primaryContainer
-        : theme.colorScheme.surfaceContainerHigh;
+        : (isAssistant
+              ? theme.colorScheme.surfaceContainerHigh
+              : theme.colorScheme.tertiaryContainer);
     final textColor = isUser
         ? theme.colorScheme.onPrimaryContainer
-        : theme.colorScheme.onSurface;
+        : (isAssistant
+              ? theme.colorScheme.onSurface
+              : theme.colorScheme.onTertiaryContainer);
     final roleLabel = isUser
         ? 'You'
-        : (entry.role == 'assistant' ? 'Assistant' : entry.role);
+        : (isAssistant ? 'Assistant' : entry.role);
+    final roleIcon = isUser
+        ? Icons.person_outline
+        : (isAssistant ? Icons.smart_toy_outlined : Icons.info_outline);
     final streamingSuffix = entry.open ? ' (streaming)' : '';
 
     return Semantics(
@@ -122,14 +221,14 @@ class _MessageBubble extends StatelessWidget {
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+          padding: const EdgeInsets.all(AppSpacing.md),
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.85,
           ),
           decoration: BoxDecoration(
             color: bubbleColor,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppRadius.md),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -138,6 +237,8 @@ class _MessageBubble extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Icon(roleIcon, size: 14, color: textColor),
+                  const SizedBox(width: AppSpacing.xs),
                   Text(
                     roleLabel,
                     style: theme.textTheme.labelMedium?.copyWith(
@@ -145,7 +246,7 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                   if (entry.open) ...[
-                    const SizedBox(width: 6),
+                    const SizedBox(width: AppSpacing.sm),
                     SizedBox(
                       width: 10,
                       height: 10,
@@ -159,7 +260,7 @@ class _MessageBubble extends StatelessWidget {
               ),
               if (entry.thinking.isNotEmpty)
                 _ThinkingBlock(text: entry.thinking, color: textColor),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               SelectableText(
                 entry.text,
                 style: theme.textTheme.bodyMedium?.copyWith(color: textColor),
@@ -187,6 +288,7 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
 
   @override
   Widget build(BuildContext context) {
+    final quietColor = widget.color.withValues(alpha: 0.6);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -203,14 +305,16 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
                 children: [
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
-                    color: widget.color,
+                    size: 16,
+                    color: quietColor,
                   ),
-                  const SizedBox(width: 2),
+                  const SizedBox(width: AppSpacing.xs),
+                  Icon(Icons.psychology_outlined, size: 14, color: quietColor),
+                  const SizedBox(width: AppSpacing.xs),
                   Text(
                     'Thinking',
-                    style: TextStyle(
-                      color: widget.color,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: quietColor,
                       fontStyle: FontStyle.italic,
                     ),
                   ),
@@ -221,11 +325,15 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
         ),
         if (_expanded)
           Padding(
-            padding: const EdgeInsets.only(left: 20, top: 2, bottom: 4),
-            child: Text(
+            padding: const EdgeInsets.only(
+              left: AppSpacing.lg,
+              top: AppSpacing.xs,
+              bottom: AppSpacing.xs,
+            ),
+            child: SelectableText(
               widget.text,
-              style: TextStyle(
-                color: widget.color.withValues(alpha: 0.75),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: quietColor,
                 fontStyle: FontStyle.italic,
               ),
             ),
@@ -235,61 +343,125 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
   }
 }
 
-class _ToolCard extends StatelessWidget {
+/// Compact card for one tool call: name, argument summary, and a
+/// running/done/failed status with icon and word, always visible. Detail
+/// (full arguments and output) is collapsed by default behind a bounded,
+/// independently scrollable region so streaming output never resizes the
+/// card itself and never disturbs the transcript's scroll position.
+class _ToolCard extends StatefulWidget {
   const _ToolCard({required this.entry});
 
   final TranscriptEntry entry;
 
   @override
+  State<_ToolCard> createState() => _ToolCardState();
+}
+
+class _ToolCardState extends State<_ToolCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final entry = widget.entry;
     final ok = entry.toolOk;
-    final IconData icon;
-    final Color color;
+    final IconData statusIcon;
+    final Color statusColor;
     final String statusLabel;
     if (entry.open) {
-      icon = Icons.hourglass_top;
-      color = theme.colorScheme.tertiary;
-      statusLabel = 'running';
+      statusIcon = Icons.hourglass_top;
+      statusColor = theme.colorScheme.tertiary;
+      statusLabel = 'Running';
     } else if (ok == false) {
-      icon = Icons.error_outline;
-      color = theme.colorScheme.error;
-      statusLabel = 'failed';
+      statusIcon = Icons.error_outline;
+      statusColor = theme.colorScheme.error;
+      statusLabel = 'Failed';
     } else {
-      icon = Icons.check_circle_outline;
-      color = theme.colorScheme.primary;
-      statusLabel = 'done';
+      statusIcon = Icons.check_circle_outline;
+      statusColor = theme.colorScheme.primary;
+      statusLabel = 'Done';
     }
     final name = entry.toolName ?? 'tool';
+    final summary = _summarizeToolInput(entry.toolInput);
+    final formattedInput = _formatToolInput(entry.toolInput);
 
     return Semantics(
-      label: 'Tool $name, $statusLabel',
+      label: 'Tool $name, $statusLabel${summary.isNotEmpty ? ', $summary' : ''}',
       child: Card(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, color: color, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(name, style: theme.textTheme.titleSmall),
+        margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Row(
+                    children: [
+                      Icon(Icons.build_outlined, size: 18),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(name, style: theme.textTheme.titleSmall),
+                            if (summary.isNotEmpty)
+                              Text(
+                                summary,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Icon(statusIcon, color: statusColor, size: 18),
+                      const SizedBox(width: AppSpacing.xs),
+                      Text(
+                        statusLabel,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: statusColor,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Icon(
+                        _expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ],
                   ),
-                  Text(
-                    statusLabel,
-                    style: theme.textTheme.labelSmall?.copyWith(color: color),
-                  ),
+                ),
+                if (_expanded) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  if (formattedInput.isNotEmpty) ...[
+                    Text('Arguments', style: theme.textTheme.labelSmall),
+                    const SizedBox(height: AppSpacing.xs),
+                    _CodeBlock(text: formattedInput, maxHeight: 160),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                  if (entry.text.isNotEmpty) ...[
+                    Text('Output', style: theme.textTheme.labelSmall),
+                    const SizedBox(height: AppSpacing.xs),
+                    _CodeBlock(text: entry.text, maxHeight: 240),
+                  ] else if (entry.open)
+                    Text(
+                      'Waiting for output...',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                 ],
-              ),
-              if (entry.text.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(entry.text, style: theme.textTheme.bodySmall),
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -324,14 +496,14 @@ class _NoticeLine extends StatelessWidget {
     return Semantics(
       label: 'Notice, $level: ${entry.text}',
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(icon, size: 16, color: color),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: Text(
+              child: SelectableText(
                 entry.text,
                 style: theme.textTheme.bodySmall?.copyWith(color: color),
               ),
@@ -354,13 +526,27 @@ class _SystemLine extends StatelessWidget {
     return Semantics(
       label: entry.text,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Center(
-          child: Text(
-            entry.text,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.circle_outlined,
+                size: 10,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Flexible(
+                child: Text(
+                  entry.text,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
           ),
         ),
       ),

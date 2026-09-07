@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../notifications.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
 import '../session_store.dart';
+import '../theme.dart';
 
 /// Frequently used session settings, reachable directly rather than through
 /// the slash command reference: model picker, thinking level, compaction,
@@ -50,19 +54,20 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final state = widget.sessionStore.state;
     final disabled = !widget.canControl || _busy;
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Text('Session', style: Theme.of(context).textTheme.titleMedium),
+                Text('Session', style: theme.textTheme.titleMedium),
                 const Spacer(),
                 if (_busy)
                   const SizedBox(
@@ -73,11 +78,32 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
               ],
             ),
             if (!widget.canControl)
-              const Padding(
-                padding: EdgeInsets.only(top: 4, bottom: 8),
-                child: Text('Read-only connection: settings are disabled.'),
+              Padding(
+                padding: const EdgeInsets.only(
+                  top: AppSpacing.xs,
+                  bottom: AppSpacing.sm,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.visibility,
+                      size: 14,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: Text(
+                        'Settings are disabled: read-only connection.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             const Divider(),
+            const SizedBox(height: AppSpacing.sm),
             Semantics(
               label:
                   'Thinking level, currently ${state?.thinkingLevel ?? 'unknown'}',
@@ -105,7 +131,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                       },
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Semantics(
               button: true,
               label: 'Cycle model',
@@ -121,7 +147,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                 label: const Text('Cycle model'),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Semantics(
               button: true,
               label: 'Compact session',
@@ -136,7 +162,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                 label: const Text('Compact session'),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Semantics(
               button: true,
               label: 'Start new session',
@@ -154,9 +180,9 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
               ),
             ),
             if (state?.todos != null && state!.todos!.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Text('Todos', style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.lg),
+              Text('Todos', style: theme.textTheme.titleSmall),
+              const SizedBox(height: AppSpacing.xs),
               for (final todo in state.todos!)
                 Semantics(
                   label: '${todo.phase}: ${todo.content}, ${todo.status}',
@@ -176,6 +202,48 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                   ),
                 ),
             ],
+            const SizedBox(height: AppSpacing.lg),
+            const Divider(),
+            const SizedBox(height: AppSpacing.sm),
+            Text('Notifications', style: theme.textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.xs),
+            Semantics(
+              label:
+                  'Notify me when the agent needs an answer or finishes a run, currently ${(NotificationService.instance.userEnabled ?? false) ? 'on' : 'off'}',
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Notify on requests and run status'),
+                value: NotificationService.instance.userEnabled ?? false,
+                onChanged: (value) {
+                  setState(() {
+                    unawaited(NotificationService.instance.setUserEnabled(value));
+                  });
+                },
+              ),
+            ),
+            if (NotificationService.instance.disabledReason != null)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.notifications_off_outlined,
+                      size: 14,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: Text(
+                        NotificationService.instance.disabledReason!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

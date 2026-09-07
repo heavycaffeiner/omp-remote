@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../notification_rules.dart';
+import '../notifications.dart';
 import '../profile_store.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
 import '../session_store.dart';
+import '../theme.dart';
 import '../widgets/interactive_request_card.dart';
 import '../widgets/state_header.dart';
 import '../widgets/transcript_view.dart';
 import 'command_palette_screen.dart';
 import 'session_menu_sheet.dart';
+import 'session_switch_sheet.dart';
 
 /// Live session view: transcript, state header, prompt composer, abort
 /// button, and any pending interactive request. Every mutating affordance
@@ -30,7 +36,8 @@ class SessionScreen extends StatefulWidget {
   State<SessionScreen> createState() => _SessionScreenState();
 }
 
-class _SessionScreenState extends State<SessionScreen> {
+class _SessionScreenState extends State<SessionScreen>
+    with WidgetsBindingObserver {
   late final SessionStore _sessionStore = SessionStore(
     relayClient: widget.relayClient,
   );
@@ -39,15 +46,64 @@ class _SessionScreenState extends State<SessionScreen> {
     phase: ConnectionPhase.disconnected,
   );
   bool _sending = false;
+  bool _appInForeground = true;
+  StreamSubscription<ServerFrame>? _notificationSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.relayClient.statusStream.listen((status) {
-      if (mounted) setState(() => _status = status);
+      if (!mounted) return;
+      setState(() => _status = status);
+      _updateNotificationForeground();
     });
     _sessionStore.addListener(_onStoreChanged);
     widget.relayClient.connect();
+    // Ask for the notification permission once the user has actually
+    // connected, not at cold start; fire-and-forget, the result only
+    // affects whether notifications can show later.
+    unawaited(NotificationService.instance.requestPermission());
+    _notificationSubscription = NotificationService.instance.attachToClient(
+      widget.relayClient,
+      sessionLabel: _sessionLabelFor,
+    );
+    NotificationService.instance.onNotificationTap = _handleNotificationTap;
+    _updateNotificationForeground();
+  }
+
+  String _sessionLabelFor(String agentId) {
+    final agent = _status.agents.where((a) => a.agentId == agentId).firstOrNull;
+    return _sessionStore.state?.sessionName ?? agent?.name ?? agentId;
+  }
+
+  /// Switches the session in place when a notification for a different
+  /// agent (in this connection's roster) is tapped while this screen is
+  /// already open. A tap that names an agent outside this roster is a
+  /// cold-start case handled elsewhere.
+  void _handleNotificationTap(NotificationPayload payload) {
+    if (!mounted || payload.agentId == _status.subscribedAgentId) return;
+    final agent = _status.agents
+        .where((a) => a.agentId == payload.agentId)
+        .firstOrNull;
+    if (agent == null) return;
+    _sessionStore.resetForAgentSwitch();
+    widget.relayClient.subscribeToAgent(agent.agentId);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
+    _updateNotificationForeground();
+  }
+
+  void _updateNotificationForeground() {
+    final pending = _sessionStore.pendingRequests;
+    NotificationService.instance.updateForeground(
+      appInForeground: _appInForeground,
+      agentId: _status.subscribedAgentId,
+      requestId: pending.isEmpty ? null : pending.last.id,
+    );
   }
 
   void _onStoreChanged() {
@@ -58,6 +114,7 @@ class _SessionScreenState extends State<SessionScreen> {
         SnackBar(content: Text('Answer not accepted: ${lateError.message}')),
       );
     }
+    _updateNotificationForeground();
     setState(() {});
   }
 
@@ -65,8 +122,29 @@ class _SessionScreenState extends State<SessionScreen> {
       _status.role == ClientRole.control &&
       _status.phase == ConnectionPhase.connected;
 
+  /// Active session name and agent id, formatted as one line of text, for
+  /// the state header. In relay mode this is found by `subscribedAgentId`
+  /// in the roster; a direct connection always has exactly one agent.
+  String? get _activeSessionLabel {
+    final agents = _status.agents;
+    if (agents.isEmpty) return null;
+    final subscribed = _status.subscribedAgentId;
+    final AgentInfo? agent;
+    if (subscribed != null) {
+      agent = agents.where((a) => a.agentId == subscribed).firstOrNull;
+    } else {
+      agent = agents.length == 1 ? agents.first : null;
+    }
+    if (agent == null) return null;
+    final sessionName = _sessionStore.state?.sessionName;
+    return '${sessionName ?? agent.name} (${agent.agentId})';
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    NotificationService.instance.onNotificationTap = null;
+    unawaited(_notificationSubscription?.cancel());
     _sessionStore.removeListener(_onStoreChanged);
     _sessionStore.dispose();
     widget.relayClient.dispose();
@@ -125,6 +203,40 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 
+  void _openSwitcher() async {
+    final target = await showModalBottomSheet<SavedProfile>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SessionSwitchSheet(
+        relayClient: widget.relayClient,
+        sessionStore: _sessionStore,
+        profileStore: widget.profileStore,
+        currentProfileId: widget.savedProfileId,
+        status: _status,
+      ),
+    );
+    if (target == null || !mounted) return;
+    final uri = Uri.tryParse(target.url);
+    if (uri == null) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => SessionScreen(
+          relayClient: RelayClient(
+            profile: ConnectionProfile(
+              url: uri,
+              token: target.token,
+              role: target.role,
+              agentId: target.agentId,
+              name: target.deviceName,
+            ),
+          ),
+          profileStore: widget.profileStore,
+          savedProfileId: target.id,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final streaming = _sessionStore.state?.streaming ?? false;
@@ -132,7 +244,7 @@ class _SessionScreenState extends State<SessionScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Remote-OMP'),
+        title: const Text('OMPRemote'),
         actions: [
           if (_canControl)
             Semantics(
@@ -144,6 +256,15 @@ class _SessionScreenState extends State<SessionScreen> {
                 tooltip: 'Slash command reference',
               ),
             ),
+          Semantics(
+            button: true,
+            label: 'Switch session',
+            child: IconButton(
+              icon: const Icon(Icons.swap_horiz),
+              onPressed: _openSwitcher,
+              tooltip: 'Switch session',
+            ),
+          ),
           Semantics(
             button: true,
             label: 'Open session menu',
@@ -158,7 +279,11 @@ class _SessionScreenState extends State<SessionScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            StateHeader(status: _status, state: _sessionStore.state),
+            StateHeader(
+              status: _status,
+              state: _sessionStore.state,
+              activeSessionLabel: _activeSessionLabel,
+            ),
             if (pending.isNotEmpty && _canControl)
               InteractiveRequestCard(
                 pending: pending.last,
@@ -175,14 +300,17 @@ class _SessionScreenState extends State<SessionScreen> {
 
   Widget _buildComposer(BuildContext context, bool streaming) {
     final theme = Theme.of(context);
-    final disabledReason = _status.role == ClientRole.viewer
-        ? 'Read-only connection: sending is disabled.'
-        : (_status.phase != ConnectionPhase.connected
-              ? 'Not connected.'
-              : null);
+    final isViewer = _status.role == ClientRole.viewer;
+    final notConnected = _status.phase != ConnectionPhase.connected;
+    final sendDisabledReason = isViewer
+        ? 'Sending is disabled: read-only connection.'
+        : (notConnected ? 'Sending is disabled: not connected.' : null);
+    final abortDisabledReason = !_canControl
+        ? null // covered by sendDisabledReason already
+        : (!streaming ? 'Abort is disabled: nothing is currently streaming.' : null);
 
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
         border: Border(
@@ -192,10 +320,37 @@ class _SessionScreenState extends State<SessionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (disabledReason != null)
+          if (sendDisabledReason != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(disabledReason, style: theme.textTheme.bodySmall),
+              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+              child: Row(
+                children: [
+                  Icon(
+                    isViewer ? Icons.visibility : Icons.cloud_off,
+                    size: 14,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      sendDisabledReason,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (abortDisabledReason != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+              child: Text(
+                abortDisabledReason,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -208,7 +363,7 @@ class _SessionScreenState extends State<SessionScreen> {
                     controller: _promptController,
                     enabled: _canControl && !_sending,
                     minLines: 1,
-                    maxLines: 5,
+                    maxLines: 8,
                     keyboardType: TextInputType.multiline,
                     textInputAction: TextInputAction.newline,
                     textCapitalization: TextCapitalization.sentences,
@@ -219,7 +374,7 @@ class _SessionScreenState extends State<SessionScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Semantics(
                 button: true,
                 label: 'Send prompt',
@@ -235,12 +390,12 @@ class _SessionScreenState extends State<SessionScreen> {
                       : const Icon(Icons.send),
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppSpacing.xs),
               Semantics(
                 button: true,
                 label: streaming
                     ? 'Abort current turn'
-                    : 'Abort (nothing streaming)',
+                    : 'Abort, disabled: nothing streaming',
                 enabled: _canControl && streaming,
                 child: IconButton.filledTonal(
                   onPressed: (_canControl && streaming) ? _abort : null,
@@ -254,3 +409,4 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 }
+

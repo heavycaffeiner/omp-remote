@@ -8,7 +8,7 @@ questions the agent would otherwise ask at your keyboard.
 | --------- | ------------------------------------------------------------------- |
 | `plugin/` | An omp extension. Loads into a session and serves it.               |
 | `relay/`  | A Go WebSocket hub in Docker, for when the phone cannot reach you.  |
-| `app/`    | Remote-OMP, a Flutter client for Android and iOS.                   |
+| `app/`    | OMPRemote, a Flutter client for Android and iOS.                    |
 
 ## Two ways to connect
 

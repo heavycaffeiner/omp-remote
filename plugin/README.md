@@ -1,6 +1,6 @@
 # omp-remote plugin
 
-An omp extension that exposes a running session to the [Remote-OMP](../README.md)
+An omp extension that exposes a running session to the [OMPRemote](../README.md)
 phone app over the wire protocol in `docs/protocol.md`. It never changes what
 omp itself does; it observes the session and relays a bounded set of commands
 and interactive requests to a remote client.
@@ -64,7 +64,7 @@ tells you why nothing is reachable.
 ### `/remote-omp`
 
 Prints a terminal QR code, a six-character pairing code, and a link for the
-Remote-OMP app (`docs/protocol.md`, "Pairing").
+OMPRemote app (`docs/protocol.md`, "Pairing").
 
 The code is what makes pairing without a camera bearable: six characters typed
 into the app instead of a 64-character token copied by hand. It is redeemed at

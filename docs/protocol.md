@@ -16,7 +16,7 @@ wire format and does not care which one it is on.
 omp process                     relay (docker)                 phone
 +------------------+            +---------------+            +-------------+
 | omp-remote       | ---- WS -> | /agent        |            |             |
-| plugin (agent)   |            |     hub       | <- WS ---- | Remote-OMP  |
+| plugin (agent)   |            |     hub       | <- WS ---- | OMPRemote   |
 +------------------+            | /client       |            |  (client)   |
                                 +---------------+            +-------------+
 ```
@@ -29,7 +29,7 @@ port. Use this across networks.
 ```
 omp process                                      phone
 +-------------------------------+              +-------------+
-| omp-remote plugin             | <-- WS ----- | Remote-OMP  |
+| omp-remote plugin             | <-- WS ----- | OMPRemote   |
 |   local server on :8788       |              |  (client)   |
 |   path /client                |              +-------------+
 +-------------------------------+
@@ -63,14 +63,14 @@ Relay:
 | Path       | Method | Purpose                                |
 | ---------- | ------ | -------------------------------------- |
 | `/agent`   | GET    | WebSocket upgrade for a plugin         |
-| `/client`  | GET    | WebSocket upgrade for a Remote-OMP app |
+| `/client`  | GET    | WebSocket upgrade for an OMPRemote app |
 | `/healthz` | GET    | Liveness probe, returns `ok`           |
 
 Plugin local server:
 
 | Path       | Method | Purpose                                |
 | ---------- | ------ | -------------------------------------- |
-| `/client`  | GET    | WebSocket upgrade for a Remote-OMP app |
+| `/client`  | GET    | WebSocket upgrade for an OMPRemote app |
 | `/pair`    | GET    | Pairing payload, see Pairing           |
 | `/healthz` | GET    | Liveness probe, returns `ok`           |
 

@@ -103,6 +103,15 @@ class SessionStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Resets local seq tracking, pending requests, and the transcript.
+  /// Called before subscribing to a different agent so stale state from
+  /// the previous agent never bleeds into the new one.
+  void resetForAgentSwitch() {
+    _lastAppliedSeq = 0;
+    _pendingRequests.clear();
+    clearTranscript();
+  }
+
   void _handleFrame(ServerFrame frame) {
     switch (frame) {
       case EventFrame():

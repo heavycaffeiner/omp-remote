@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="OMPRemote">
+  <title>OMPRemote</title>
+
+  <rect width="1024" height="1024" rx="228" ry="228" fill="#0f0f0f"/>
+
+  <!-- Pi over two signal arcs: the glyph names oh-my-pi, the arcs make it read
+       as a remote link. Drawn rather than set as text so the mark does not
+       depend on a font being installed. Round caps and joins throughout. -->
+  <g fill="none" stroke="#fafafa" stroke-width="78" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 300 330 H 724"/>
+    <path d="M 424 330 V 596"/>
+    <path d="M 626 330 V 554 q 0 42 42 42 h 28"/>
+  </g>
+
+  <g fill="none" stroke="#fafafa" stroke-linecap="round" opacity="0.5" stroke-width="54">
+    <path d="M 596 700 a 122 122 0 0 1 -84 34 a 122 122 0 0 1 -84 -34"/>
+    <path d="M 692 786 a 258 258 0 0 1 -180 74 a 258 258 0 0 1 -180 -74"/>
+  </g>
+</svg>
