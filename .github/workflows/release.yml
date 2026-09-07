@@ -9,6 +9,35 @@ permissions:
   packages: write
 
 jobs:
+  relay-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/omp-remote-relay
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: relay
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   apk:
     runs-on: ubuntu-latest
     steps:
@@ -22,6 +51,7 @@ jobs:
           flutter-version: "3.47.2"
           channel: stable
           cache: true
+
       # Only the two hand-edited platform files are tracked (see .gitignore),
       # so the gradle scaffolding has to be regenerated here. `flutter create`
       # overwrites AndroidManifest.xml, so the tracked one is restored after.
@@ -34,93 +64,132 @@ jobs:
           cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           grep -q 'android:scheme="remote-omp"' \
             android/app/src/main/AndroidManifest.xml
+
+      # Fails the job when a signing secret is missing, rather than silently
+      # falling back to the debug key and shipping an unverifiable APK.
+      - name: Install the signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: app/android
+        run: |
+          for v in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::secret for $v is not set; see the README" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
+          cat > key.properties <<'EOF'
+          storeFile=upload-keystore.jks
+          EOF
+          {
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } >> key.properties
+
+      - name: Wire the release signing config into gradle
+        working-directory: app/android
+        run: |
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("app/build.gradle.kts")
+          s = p.read_text()
+
+          loader = '''import java.util.Properties
+          import java.io.FileInputStream
+
+          val keystoreProperties = Properties().apply {
+              load(FileInputStream(rootProject.file("key.properties")))
+          }
+
+          '''
+          s = loader + s
+
+          signing = '''    signingConfigs {
+                  create("release") {
+                      storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                      storePassword = keystoreProperties["storePassword"] as String
+                      keyAlias = keystoreProperties["keyAlias"] as String
+                      keyPassword = keystoreProperties["keyPassword"] as String
+                  }
+              }
+
+          '''
+          s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
+          s = re.sub(
+              r'signingConfig = signingConfigs\.getByName\("debug"\)',
+              'signingConfig = signingConfigs.getByName("release")',
+              s,
+          )
+          p.write_text(s)
+          PY
+          grep -q 'signingConfigs.getByName("release")' app/build.gradle.kts
+
       - run: flutter pub get
         working-directory: app
-      # Debug-signed: a release build needs a keystore this repository does not
-      # carry. The APK installs and runs; it is not Play Store material.
-      - run: flutter build apk --debug
+      - run: flutter build apk --release
         working-directory: app
+
+      - name: Verify the APK is signed with the release key
+        working-directory: app
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK"
+          "$APKSIGNER" verify --print-certs "$APK" | grep -qi 'CN=' \
+            || { echo "::error::APK has no signing certificate" >&2; exit 1; }
+
       - name: Name the artifact after the tag
         run: |
           mkdir -p dist
-          cp app/build/app/outputs/flutter-apk/app-debug.apk \
+          cp app/build/app/outputs/flutter-apk/app-release.apk \
              "dist/remote-omp-${GITHUB_REF_NAME}.apk"
+
+      - name: Remove the signing material
+        if: always()
+        working-directory: app/android
+        run: rm -f upload-keystore.jks key.properties
+
       - uses: actions/upload-artifact@v4
         with:
           name: apk
           path: dist/*.apk
 
-  relay-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/omp-remote-relay
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
-        with:
-          context: relay
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  relay-binaries:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: arm64
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.27"
-          cache-dependency-path: relay/go.sum
-      - name: Build
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          mkdir -p ../dist
-          go build -trimpath -ldflags="-s -w" \
-            -o "../dist/omp-remote-relay-${GOOS}-${GOARCH}" .
-        working-directory: relay
-      - uses: actions/upload-artifact@v4
-        with:
-          name: relay-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/omp-remote-relay-*
-
   publish:
-    needs: [apk, relay-image, relay-binaries]
+    needs: [relay-image, apk]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
-          path: artifacts
-      - name: Collect and checksum
-        run: |
-          mkdir -p dist
-          find artifacts -type f \( -name '*.apk' -o -name 'omp-remote-relay-*' \) \
-            -exec cp {} dist/ \;
-          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          name: apk
+          path: dist
+      - name: Checksum
+        run: cd dist && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+          body: |
+            ## Install
+
+            **App.** Download the APK below and install it on Android. For iOS,
+            build from source: the repository has no Apple signing identity.
+
+            **Relay.** Only needed when the phone cannot reach the workstation.
+
+            ```sh
+            docker run -d -p 8787:8787 \
+              -e OMP_RELAY_AGENT_TOKEN=... \
+              -e OMP_RELAY_CONTROL_TOKEN=... \
+              -e OMP_RELAY_VIEWER_TOKEN=... \
+              ghcr.io/${{ github.repository_owner }}/omp-remote-relay:${{ github.ref_name }}
+            ```
+
+            Built for `linux/amd64` and `linux/arm64`.
+
+            **Plugin.** Clone the repository, `bun install` in `plugin/`, then
+            load it with `omp --extension /path/to/omp-remote/plugin`.

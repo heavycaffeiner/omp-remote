@@ -33,9 +33,7 @@ jobs:
         with:
           bun-version: "1.4.1"
       - run: bun install --frozen-lockfile
-        working-directory: plugin
       - run: bun run typecheck
-        working-directory: plugin
 
   app:
     runs-on: ubuntu-latest

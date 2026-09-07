@@ -1,13 +1,18 @@
 {
-	"name": "omp-remote-plugin",
-	"private": true,
-	"version": "0.1.0",
+	"name": "omp-remote",
+	"version": "0.0.1",
+	"description": "Drive a running omp coding session from your phone",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/heavycaffeiner/omp-remote.git"
+	},
 	"type": "module",
 	"omp": {
-		"extensions": ["./src/index.ts"]
+		"extensions": ["./plugin/src/index.ts"]
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit -p plugin"
 	},
 	"devDependencies": {
 		"@oh-my-pi/pi-agent-core": "^18.1.13",

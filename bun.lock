@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "omp-remote-plugin",
+      "name": "omp-remote",
       "dependencies": {
         "qrcode": "^1.5.4",
       },
