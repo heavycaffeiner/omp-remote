@@ -12,7 +12,7 @@ class PairingPayload {
     required this.url,
     required this.token,
     required this.role,
-    this.agentId,
+    required this.agentId,
     this.name,
   });
 
@@ -20,7 +20,10 @@ class PairingPayload {
   final Uri url;
   final String token;
   final ClientRole role;
-  final String? agentId;
+
+  /// Which session the link opens. Both transports need it: a workstation
+  /// serves every session on one port, and a relay routes by target.
+  final String agentId;
   final String? name;
 
   /// Parses and validates a `remote-omp://pair?...` link.
@@ -83,10 +86,11 @@ class PairingPayload {
       return 'role must be control or viewer';
     }
 
+    // A workstation serves every session on one port and a relay routes by
+    // target, so neither transport can act on a link that names no session.
     final agentId = params['agent'];
-    if (transport == PairingTransport.relay &&
-        (agentId == null || agentId.isEmpty)) {
-      return 'relay pairing requires an agent parameter';
+    if (agentId == null || agentId.isEmpty) {
+      return 'missing agent parameter';
     }
 
     final name = params['name'];
@@ -96,7 +100,7 @@ class PairingPayload {
       url: url,
       token: token,
       role: role,
-      agentId: transport == PairingTransport.relay ? agentId : null,
+      agentId: agentId,
       name: (name == null || name.isEmpty) ? null : name,
     );
   }

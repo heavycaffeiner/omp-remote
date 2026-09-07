@@ -74,7 +74,8 @@ export function directPairingTargets(port: number): PairingTarget[] {
 
 // Builds remote-omp://pair?v=2&t=...&url=...&token=...&role=...&agent=...&name=...
 // (docs/protocol.md, "Pairing"), matching the Flutter app's parser exactly.
-// `agent` is present only for relay targets, per the Pairing table ("relay" required, absent for direct).
+// `agent` is sent on both transports: a workstation serves every session on
+// one port, so without it a client cannot tell which one the link is for.
 export function buildPairingLink(
 	target: PairingTarget,
 	token: string,
@@ -88,7 +89,7 @@ export function buildPairingLink(
 	params.set("url", target.url);
 	params.set("token", token);
 	params.set("role", role);
-	if (target.transport === "relay") params.set("agent", agentId);
+	params.set("agent", agentId);
 	params.set("name", name);
 	return `remote-omp://pair?${params.toString()}`;
 }

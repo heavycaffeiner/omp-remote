@@ -86,7 +86,8 @@ void main() {
     await tester.enterText(
       find.byType(TextField),
       'remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788'
-          '&token=0123456789abcdef&role=control&name=laptop',
+          '&token=0123456789abcdef&role=control'
+          '&agent=laptop%2Fproj%23ab12&name=laptop',
     );
     await tester.tap(find.text('Connect'));
     await tester.pumpAndSettle();

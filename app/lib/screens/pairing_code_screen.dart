@@ -102,7 +102,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
       _error = null;
     });
 
-    final outcome = await redeemPairingCodeOnHost(host: host, code: code);
+    final outcome = await redeemPairingCodeOnHost(address: host, code: code);
 
     if (!mounted) return;
     setState(() => _connecting = false);
@@ -188,7 +188,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
               controller: _hostController,
               decoration: const InputDecoration(
                 labelText: 'Address',
-                hintText: '100.64.0.3 or my-laptop.local',
+                hintText: '100.64.0.3:8788',
               ),
               keyboardType: TextInputType.url,
               autocorrect: false,

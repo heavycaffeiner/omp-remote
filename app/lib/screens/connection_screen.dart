@@ -86,8 +86,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   }
 
   /// Takes the whole `remote-omp://pair?...` link from `/remote-omp`. One
-  /// paste carries the address, the token, and the role, so there is nothing
-  /// left to fill in by hand.
+  /// paste carries the address, the token, the role, and which session to
+  /// open, so there is nothing left to fill in by hand.
   Future<void> _submitLink() async {
     final raw = _linkController.text.trim();
     if (raw.isEmpty) {
@@ -281,7 +281,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         children: [
           Text(
             'Run /remote-omp on your workstation and paste the link it '
-            'prints. It carries the address, the token, and the role.',
+            'prints. It carries the whole connection.',
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 12),

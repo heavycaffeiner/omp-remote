@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../protocol.dart';
-import 'direct_discovery.dart' show discoveryPort;
+import 'direct_discovery.dart' show discoveryPort, parseAddress;
 
 /// Outcome of one redemption attempt. A sealed result type rather than a
 /// thrown exception, because the caller must render three cases
@@ -164,17 +164,28 @@ Future<PairingCodeOutcome> redeemPairingCode({
   }
 }
 
-/// Redeems [code] against the workstation's single discovery port. One
-/// session hosts that port for the whole machine, so there is nothing to
-/// search: the host either recognizes the code or rejects it.
+/// Redeems [code] against the workstation's discovery port. One session
+/// hosts that port for the whole machine, so there is nothing to search:
+/// the host either recognizes the code or rejects it. [address] accepts
+/// `host` or `host:port`, since the port is not always the default.
 Future<PairingCodeOutcome> redeemPairingCodeOnHost({
-  required String host,
+  required String address,
   required String code,
   Duration timeout = const Duration(seconds: 10),
 }) {
+  final parsed = parseAddress(address);
+  if (parsed == null) {
+    return Future.value(
+      PairingCodeNetworkError(
+        host: address,
+        port: discoveryPort,
+        reason: 'that is not a valid address',
+      ),
+    );
+  }
   return redeemPairingCode(
-    host: host,
-    port: discoveryPort,
+    host: parsed.host,
+    port: parsed.port,
     code: code,
     timeout: timeout,
   );

@@ -1,9 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- A direct connection dials a workstation by IP over ws://, which API
+         28 and later block by default. Those addresses are private (LAN,
+         Tailscale) and cannot be enumerated as domains in a network security
+         config, so cleartext is on globally; the relay path uses wss://
+         regardless. -->
     <application
         android:label="OMPRemote"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

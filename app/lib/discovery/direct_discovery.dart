@@ -15,6 +15,38 @@ import '../protocol.dart';
 /// The port the plugin's local server binds (docs/protocol.md, "Direct").
 const int discoveryPort = 8788;
 
+/// Splits `host`, `host:port`, `[v6]`, or `[v6]:port` into a host and a
+/// port, defaulting to the discovery port. Returns null when the text is
+/// not an address at all.
+({String host, int port})? parseAddress(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+
+  if (text.startsWith('[')) {
+    final end = text.indexOf(']');
+    if (end < 2) return null;
+    final host = text.substring(1, end);
+    final rest = text.substring(end + 1);
+    if (rest.isEmpty) return (host: host, port: discoveryPort);
+    if (!rest.startsWith(':')) return null;
+    final port = int.tryParse(rest.substring(1));
+    if (port == null || port < 1 || port > 65535) return null;
+    return (host: host, port: port);
+  }
+
+  final colon = text.lastIndexOf(':');
+  // More than one colon and no brackets is a bare IPv6 literal, which has
+  // no room for a port.
+  if (colon < 0 || text.indexOf(':') != colon) {
+    return (host: text, port: discoveryPort);
+  }
+  final host = text.substring(0, colon);
+  if (host.isEmpty) return null;
+  final port = int.tryParse(text.substring(colon + 1));
+  if (port == null || port < 1 || port > 65535) return null;
+  return (host: host, port: port);
+}
+
 /// One session on a discovered workstation.
 class DiscoveredSession {
   const DiscoveredSession({required this.agentId, required this.name});
@@ -86,14 +118,18 @@ class DiscoveredWorkstation {
   }
 }
 
-/// Asks one host whether a workstation is listening, and which sessions it
-/// serves. A refused or timed-out port means nothing is there, which is the
-/// common case and not an error worth surfacing.
+/// Asks one workstation whether it is listening, and which sessions it
+/// serves. [address] accepts `host` or `host:port`. A refused or timed-out
+/// port means nothing is there, which is the common case and not an error
+/// worth surfacing.
 Future<DiscoveredWorkstation?> discoverWorkstation(
-  String host, {
-  int port = discoveryPort,
+  String address, {
   Duration timeout = const Duration(milliseconds: 800),
 }) async {
+  final parsed = parseAddress(address);
+  if (parsed == null) return null;
+  final host = parsed.host;
+  final port = parsed.port;
   final client = HttpClient()..connectionTimeout = timeout;
   try {
     final request = await client

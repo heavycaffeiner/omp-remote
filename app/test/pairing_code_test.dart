@@ -10,6 +10,29 @@ import 'package:remote_omp/discovery/pairing_code.dart';
 import 'package:remote_omp/pairing.dart';
 
 void main() {
+  group('PairingPayload.parse', () {
+    test('carries the session a direct link names', () {
+      // A workstation serves every session on one port. Without this the app
+      // connected, received events, and refused every command with
+      // "no agent selected".
+      final result = PairingPayload.parse(
+        'remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788'
+        '&token=0123456789abcdef&role=control'
+        '&agent=laptop%2Fproj%23ab12&name=laptop',
+      );
+      expect(result, isA<PairingPayload>());
+      expect((result as PairingPayload).agentId, 'laptop/proj#ab12');
+    });
+
+    test('rejects a link that names no session', () {
+      final result = PairingPayload.parse(
+        'remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788'
+        '&token=0123456789abcdef&role=control&name=laptop',
+      );
+      expect(result, 'missing agent parameter');
+    });
+  });
+
   group('normalizePairingCode', () {
     test('strips spaces and dashes and uppercases before validating', () {
       final result = normalizePairingCode('hz-e6 vd');
@@ -156,6 +179,43 @@ void main() {
       final error = outcome as PairingCodeNetworkError;
       expect(error.host, InternetAddress.loopbackIPv4.address);
       expect(error.port, port);
+    });
+  });
+
+  group('parseAddress', () {
+    test('reads the port the workstation actually printed', () {
+      // /remote-omp prints "host:port", and a non-default port used to be
+      // silently replaced by 8788 or to crash the URI builder outright.
+      expect(parseAddress('192.168.0.126:19100'), (
+        host: '192.168.0.126',
+        port: 19100,
+      ));
+      expect(parseAddress('workstation.ts.net:8790'), (
+        host: 'workstation.ts.net',
+        port: 8790,
+      ));
+    });
+
+    test('defaults to the discovery port when none is given', () {
+      expect(parseAddress('100.64.0.3'), (
+        host: '100.64.0.3',
+        port: discoveryPort,
+      ));
+    });
+
+    test('keeps a bracketed IPv6 literal separate from its port', () {
+      expect(parseAddress('[fe80::1]:9000'), (host: 'fe80::1', port: 9000));
+      expect(parseAddress('[::1]'), (host: '::1', port: discoveryPort));
+      // Unbracketed, every colon belongs to the address.
+      expect(parseAddress('fe80::1'), (host: 'fe80::1', port: discoveryPort));
+    });
+
+    test('rejects text that is not an address', () {
+      expect(parseAddress(''), isNull);
+      expect(parseAddress('host:'), isNull);
+      expect(parseAddress('host:0'), isNull);
+      expect(parseAddress('host:70000'), isNull);
+      expect(parseAddress(':9000'), isNull);
     });
   });
 }

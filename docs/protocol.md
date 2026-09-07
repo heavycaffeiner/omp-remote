@@ -152,7 +152,7 @@ remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788&token=<token>&ro
 | `url`     | yes      | WebSocket origin, without the `/client` path         |
 | `token`   | yes      | The token for the requested role                     |
 | `role`    | yes      | `control` or `viewer`                                |
-| `agent`   | relay    | Agent id to subscribe to; absent for direct          |
+| `agent`   | yes      | Which session to open; both transports serve several  |
 | `name`    | no       | Display name for the connection                      |
 
 The token is in the link, so the link is a credential. It is shown on the

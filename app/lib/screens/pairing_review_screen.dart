@@ -88,8 +88,7 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
             _InfoRow(label: 'Transport', value: transport),
             _InfoRow(label: 'URL', value: payload.url.toString()),
             _InfoRow(label: 'Role', value: roleLabel),
-            if (payload.agentId != null)
-              _InfoRow(label: 'Agent', value: payload.agentId!),
+            _InfoRow(label: 'Session', value: payload.agentId),
             const _InfoRow(label: 'Token', value: 'Received (hidden)'),
             const SizedBox(height: 16),
             TextField(
