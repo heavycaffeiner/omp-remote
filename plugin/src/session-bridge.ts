@@ -18,6 +18,7 @@ import {
 	buildMessageEvent,
 	buildToolEndEvent,
 	buildSubagentLifecycleEvent,
+	buildTodosEventFromResult,
 	buildSubagentProgressEvent,
 	modelToRef,
 	safeStringifyInput,
@@ -38,6 +39,7 @@ import type {
 	RequestAnswer,
 	RequestCancelReason,
 	StateSnapshot,
+	TodoSummary,
 	ViewerCounts,
 } from "./protocol-types.js";
 import type { RemoteConfig } from "./config.js";
@@ -105,6 +107,10 @@ export class SessionBridge {
 	/// Write-tool arguments held between `tool_execution_start` and its end,
 	/// because the result carries neither the content nor a diff.
 	private readonly pendingWrites = new Map<string, { path: string; content: string }>();
+
+	/// Latest todo list, so a client attaching mid-run sees it without
+	/// waiting for the next todo mutation.
+	private lastTodos: TodoSummary[] | undefined;
 	private queueSeq = 0;
 	private readonly connectedAt = Date.now();
 	private readonly bashProcesses = new Map<string, AbortController>();
@@ -224,6 +230,7 @@ export class SessionBridge {
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;
 		if (this.queue.length > 0) snapshot.queue = this.queue.map((q) => ({ ...q }));
+		if (this.lastTodos !== undefined) snapshot.todos = this.lastTodos;
 		return snapshot;
 	}
 
@@ -528,6 +535,14 @@ export class SessionBridge {
 					written,
 				),
 			);
+			if (event.toolName === "todo" && !event.isError) {
+				const todos = buildTodosEventFromResult(event.result);
+				if (todos && todos.k === "todos") {
+					this.lastTodos = todos.todos;
+					this.broadcastEvent(todos);
+					this.emitState();
+				}
+			}
 		});
 
 		pi.on("todo_reminder", async (event, ctx) => {

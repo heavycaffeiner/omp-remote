@@ -137,6 +137,30 @@ export function buildToolEndEvent(
 	return event;
 }
 
+// The todo tool's result carries the whole list, so a `todos` event can be
+// derived from it. `todo_reminder` alone is not enough: it fires only when
+// the harness nags, not when the list actually changes.
+export function buildTodosEventFromResult(result: unknown): RemoteEvent | undefined {
+	const phases = field(field(result, "details"), "phases");
+	if (!Array.isArray(phases)) return undefined;
+	const todos: Array<{ phase: string; content: string; status: string }> = [];
+	for (const phase of phases) {
+		const name = stringField(phase, "name");
+		const tasks = field(phase, "tasks");
+		if (!Array.isArray(tasks)) continue;
+		for (const task of tasks) {
+			const content = stringField(task, "content");
+			if (content.length === 0) continue;
+			todos.push({
+				phase: name,
+				content: truncateText(content, 512),
+				status: stringField(task, "status") || "pending",
+			});
+		}
+	}
+	return { k: "todos", todos };
+}
+
 function asAdditions(text: string): string {
 	const lines = text.split("\n");
 	return [`@@ -0,0 +1,${lines.length} @@`, ...lines.map((line) => `+${line}`)].join("\n");

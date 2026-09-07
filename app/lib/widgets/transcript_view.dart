@@ -328,6 +328,12 @@ class _MessageRow extends StatelessWidget {
       'user' => ('you', Icons.person_outline, scheme.primary),
       'assistant' => ('omp', Icons.smart_toy_outlined, scheme.onSurface),
       'system' => ('system', Icons.info_outline, scheme.onSurfaceVariant),
+      'custom' || 'custom_message' => (
+        'note',
+        Icons.sticky_note_2_outlined,
+        scheme.onSurfaceVariant,
+      ),
+      'toolResult' => ('tool', Icons.build_outlined, scheme.onSurfaceVariant),
       _ => (role, Icons.chat_bubble_outline, scheme.onSurfaceVariant),
     };
 
@@ -414,7 +420,7 @@ class _Gutter extends StatelessWidget {
               child: Text(
                 label,
                 maxLines: 1,
-                overflow: TextOverflow.clip,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelSmall
                     ?.copyWith(color: color, fontFamily: 'monospace'),
               ),

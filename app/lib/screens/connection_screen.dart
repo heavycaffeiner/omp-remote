@@ -219,8 +219,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'No saved connections yet. Pair with a QR code, enter a '
-                  'code, or add one manually below.',
+                  'No saved connections yet. Scan a QR code, paste the '
+                  'pairing link, or enter a code.',
                 ),
               ),
             for (final profile in _profiles)
