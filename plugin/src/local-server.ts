@@ -1,13 +1,18 @@
-// The relayless transport (docs/protocol.md, "Direct"). Serves exactly the
-// client-facing half of the protocol on the plugin's own Bun.serve instance,
-// so the app's single code path against /client works unchanged whether it
-// talks to the relay or straight to the workstation.
+// The workstation's own hub (docs/protocol.md, "Direct").
+//
+// The first omp session to bind the port serves it for every session on the
+// machine: it answers apps on /client and accepts other sessions as agents on
+// /agent, exactly as the relay does. A session that cannot bind dials this one
+// instead. So one port carries every session, and an app sees the same roster
+// whether it reached the workstation directly or through a relay.
 
 import * as crypto from "node:crypto";
 import * as os from "node:os";
 import type { Server, ServerWebSocket } from "bun";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type {
+	AgentInfo,
+	AgentToRelayFrame,
 	ClientToServerFrame,
 	CoreEvent,
 	FrameCommand,
@@ -19,24 +24,27 @@ import { PROTOCOL_VERSION } from "./protocol-types.js";
 import type { OutboundSink, SessionBridge } from "./session-bridge.js";
 import type { RemoteConfig } from "./config.js";
 import { executeCommand, type CommandResult } from "./commands.js";
+import { AgentRegistry, type AgentChannel, type AgentEntry } from "./agent-registry.js";
 
 export interface LocalServerTokens {
 	control: string;
 	viewer: string;
+	// Presented by another session on this workstation joining as an agent.
+	agent: string;
 }
 
 const MAX_INBOUND_BYTES = 1024 * 1024;
 const MAX_OUTBOUND_QUEUE = 256;
 const PING_INTERVAL_MS = 20000;
 const READ_TIMEOUT_SECONDS = 60;
-const EVENT_RING_SIZE = 512;
-// How many consecutive ports to try before giving up, so concurrent sessions
-// on one workstation each get their own server.
-const PORT_SCAN_RANGE = 16;
+const COMMAND_TIMEOUT_MS = 60000;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
 // Crockford base32 without I, L, O, and U: no character pair a person can
 // confuse while reading a code off one screen and typing it into another.
 const PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+// Guessing is bounded by expiry and single use, but not by anything else, so
+// a burst of wrong codes stops redemption until the outstanding ones lapse.
+const MAX_FAILED_REDEMPTIONS = 10;
 
 function randomPairingCode(): string {
 	const bytes = crypto.randomBytes(6);
@@ -45,29 +53,34 @@ function randomPairingCode(): string {
 	return out;
 }
 
+// A connection is either a client watching agents or a guest session offering
+// itself as one. The kind is fixed at upgrade time by which endpoint was
+// dialed, never by anything the peer sends.
 interface ConnectionState {
+	kind: "client" | "agent";
 	role: Role;
-	subscribed: boolean;
+	subscriptions: Set<string>;
+	agentId: string | undefined;
 	backpressureStreak: number;
 	pingTimer: Timer | undefined;
 }
 
 type LocalWebSocket = ServerWebSocket<ConnectionState>;
 
-// Compares a presented token against both known tokens without short-
+// Compares a presented token against every known token without short-
 // circuiting, so response timing does not reveal which one matched (or
-// whether either did). Returns the matched role, or undefined.
-function matchToken(presented: string, tokens: LocalServerTokens): Role | undefined {
-	const presentedBuf = Buffer.from(presented, "utf8");
-	const controlBuf = Buffer.from(tokens.control, "utf8");
-	const viewerBuf = Buffer.from(tokens.viewer, "utf8");
+// whether either did).
+function constantTimeEquals(presented: Buffer, known: string): boolean {
+	const knownBuf = Buffer.from(known, "utf8");
+	return presented.length === knownBuf.length && crypto.timingSafeEqual(presented, knownBuf);
+}
 
-	const controlMatches =
-		presentedBuf.length === controlBuf.length && crypto.timingSafeEqual(presentedBuf, controlBuf);
-	const viewerMatches = presentedBuf.length === viewerBuf.length && crypto.timingSafeEqual(presentedBuf, viewerBuf);
-
-	if (controlMatches) return "control";
-	if (viewerMatches) return "viewer";
+function matchClientToken(presented: string, tokens: LocalServerTokens): Role | undefined {
+	const buf = Buffer.from(presented, "utf8");
+	const control = constantTimeEquals(buf, tokens.control);
+	const viewer = constantTimeEquals(buf, tokens.viewer);
+	if (control) return "control";
+	if (viewer) return "viewer";
 	return undefined;
 }
 
@@ -81,6 +94,12 @@ function extractToken(req: Request, url: URL): string | undefined {
 	return queryToken ?? undefined;
 }
 
+interface PendingCommand {
+	client: LocalWebSocket;
+	clientCommandId: string;
+	timer: Timer;
+}
+
 export class LocalServer {
 	private readonly bridge: SessionBridge;
 	private readonly config: RemoteConfig;
@@ -88,11 +107,13 @@ export class LocalServer {
 	readonly tokens: LocalServerTokens;
 	private server: Server<ConnectionState> | undefined;
 	private readonly connections = new Set<LocalWebSocket>();
-	private readonly sinksByConnection = new Map<LocalWebSocket, OutboundSink>();
-	private readonly eventRing: CoreEvent[] = [];
-	private controlCount = 0;
-	private viewerCount = 0;
+	private readonly registry = new AgentRegistry();
+	private readonly agentSockets = new Map<string, LocalWebSocket>();
 	private readonly pairingCodes = new Map<string, { role: Role; expiresAt: number }>();
+	private failedRedemptions = 0;
+	// Commands in flight to a guest agent, keyed by the id this hub assigned.
+	private readonly pendingCommands = new Map<string, PendingCommand>();
+	private commandSeq = 0;
 
 	constructor(bridge: SessionBridge, config: RemoteConfig, pi: ExtensionAPI) {
 		this.bridge = bridge;
@@ -101,19 +122,53 @@ export class LocalServer {
 		this.tokens = {
 			control: crypto.randomBytes(32).toString("hex"),
 			viewer: crypto.randomBytes(32).toString("hex"),
+			agent: crypto.randomBytes(32).toString("hex"),
 		};
-		// A permanently-attached internal sink records every broadcast event
-		// into a bounded ring so a client's `subscribe` with `since` can replay
-		// what it missed. SessionBridge itself only retains the latest state
-		// snapshot and pending requests, not an event history.
+		this.registerOwnSession();
+	}
+
+	// The host's own session is an ordinary registry entry, so routing never
+	// special-cases it. Its channel runs in process instead of over a socket.
+	private registerOwnSession(): void {
+		const channel: AgentChannel = {
+			sendCommand: (id, cmd, args) => {
+				executeCommand(this.bridge, this.pi, this.config, cmd, args)
+					.then((result: CommandResult) => this.deliverReply(id, result))
+					.catch((err: unknown) =>
+						this.deliverReply(id, {
+							ok: false,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					);
+			},
+			sendResponse: (id, response) => {
+				this.bridge.submitResponse(id, response);
+			},
+			sendViewers: () => {},
+			close: () => {},
+		};
+		const entry = this.registry.register(this.bridge.info, channel);
+
+		// Everything the local session emits flows into the registry the same
+		// way a guest's frames do.
 		this.bridge.attachSink({
 			sendEvent: (frame) => {
-				this.eventRing.push(frame);
-				if (this.eventRing.length > EVENT_RING_SIZE) this.eventRing.shift();
+				entry.recordEvent(frame);
+				this.fanOut(this.bridge.agentId, { ...frame, agentId: this.bridge.agentId });
 			},
-			sendState: () => {},
-			sendRequest: () => {},
-			sendRequestCancel: () => {},
+			sendState: (frame) => {
+				entry.state = frame.state;
+				entry.info = this.bridge.info;
+				this.fanOut(this.bridge.agentId, { ...frame, agentId: this.bridge.agentId });
+			},
+			sendRequest: (frame) => {
+				entry.pendingRequests.set(frame.id, frame.request);
+				this.fanOut(this.bridge.agentId, { ...frame, agentId: this.bridge.agentId });
+			},
+			sendRequestCancel: (frame) => {
+				entry.pendingRequests.delete(frame.id);
+				this.fanOut(this.bridge.agentId, { ...frame, agentId: this.bridge.agentId });
+			},
 		});
 	}
 
@@ -121,13 +176,23 @@ export class LocalServer {
 		return this.server?.port ?? this.config.local?.port ?? 0;
 	}
 
-	get clientCounts(): { control: number; viewer: number } {
-		return { control: this.controlCount, viewer: this.viewerCount };
+	get agentCount(): number {
+		return this.registry.size;
 	}
 
-	// Issues a short code that can be typed into the app in place of copying a
-	// 64-character token. It is single-use and short-lived, which is what makes
-	// six characters enough: an attacker gets one guess per code out of 32^6.
+	get clientCounts(): { control: number; viewer: number } {
+		let control = 0;
+		let viewer = 0;
+		for (const ws of this.connections) {
+			if (ws.data.kind !== "client") continue;
+			if (ws.data.role === "control") control += 1;
+			else viewer += 1;
+		}
+		return { control, viewer };
+	}
+
+	// Issues a short code standing for a token, so pairing without the QR is
+	// six typed characters rather than sixty-four.
 	issuePairingCode(role: Role): { code: string; expiresAt: number } {
 		this.prunePairingCodes();
 		let code = "";
@@ -144,14 +209,21 @@ export class LocalServer {
 		for (const [code, entry] of this.pairingCodes) {
 			if (entry.expiresAt <= now) this.pairingCodes.delete(code);
 		}
+		// Once nothing is outstanding there is nothing left to guess at, so the
+		// lockout lifts with the codes it was protecting.
+		if (this.pairingCodes.size === 0) this.failedRedemptions = 0;
 	}
 
-	// Consumes a code and returns the token it stands for. Deleting before
-	// checking expiry keeps a stale code from being retried.
 	private redeemPairingCode(code: string): { token: string; role: Role } | undefined {
+		this.prunePairingCodes();
+		if (this.failedRedemptions >= MAX_FAILED_REDEMPTIONS) return undefined;
+
 		const normalized = code.trim().toUpperCase();
 		const entry = this.pairingCodes.get(normalized);
-		if (!entry) return undefined;
+		if (!entry) {
+			this.failedRedemptions += 1;
+			return undefined;
+		}
 		this.pairingCodes.delete(normalized);
 		if (entry.expiresAt <= Date.now()) return undefined;
 		return {
@@ -160,16 +232,17 @@ export class LocalServer {
 		};
 	}
 
-	// Tries the configured port, then the next few. Several omp sessions on one
-	// workstation each want their own server, and the second one starting must
-	// not take the whole session down over a port the first one already holds.
+	// Binds the configured port only. A second session must not land on a
+	// different port: it joins this one as a guest instead, which is what keeps
+	// every session reachable through a single address.
 	start(): void {
 		if (this.server) return;
 		if (!this.config.local) throw new Error("LocalServer requires config.local");
 		const localConfig = this.config.local;
 
-		const options = {
+		this.server = Bun.serve<ConnectionState>({
 			hostname: localConfig.bind,
+			port: localConfig.port,
 			// Bun's own idle-timeout knob, in seconds; matches the protocol's
 			// 60-second read timeout for HTTP connections (the WebSocket ping
 			// interval below enforces the same budget on open sockets).
@@ -185,25 +258,12 @@ export class LocalServer {
 					ws.data.backpressureStreak = 0;
 				},
 			},
-		};
-
-		let lastError: unknown;
-		for (let port = localConfig.port; port < localConfig.port + PORT_SCAN_RANGE; port++) {
-			try {
-				this.server = Bun.serve<ConnectionState>({ ...options, port });
-				return;
-			} catch (err) {
-				lastError = err;
-			}
-		}
-		throw new Error(
-			`no free port in ${localConfig.port}..${localConfig.port + PORT_SCAN_RANGE - 1}: ${
-				lastError instanceof Error ? lastError.message : String(lastError)
-			}`,
-		);
+		});
 	}
 
 	stop(): void {
+		for (const pending of this.pendingCommands.values()) clearTimeout(pending.timer);
+		this.pendingCommands.clear();
 		for (const ws of Array.from(this.connections)) {
 			this.teardownConnection(ws);
 			ws.close(1001, "server stopping");
@@ -212,11 +272,9 @@ export class LocalServer {
 		this.server = undefined;
 	}
 
-	// The bind address is usually the wildcard 0.0.0.0, which is not a
-	// dialable address for a phone on the same network. Prefer the first
-	// non-internal IPv4 interface address in that case so the pairing link
-	// actually reaches the workstation; an explicit non-wildcard bind is
-	// used as-is.
+	// The bind address is usually the wildcard 0.0.0.0, which is not a dialable
+	// address for a phone. Prefer the first non-internal IPv4 interface in that
+	// case; an explicit non-wildcard bind is used as-is.
 	private pairingHost(): string {
 		const bind = this.config.local?.bind ?? "0.0.0.0";
 		if (bind !== "0.0.0.0") return bind;
@@ -235,11 +293,20 @@ export class LocalServer {
 			return new Response("ok", { status: 200 });
 		}
 
-		// Doubles as the discovery endpoint: a client sweeping the port range
-		// gets one of these per live session, which is why it carries cwd. No
-		// extra listener is opened for discovery. Without a code the payload
-		// holds no secret; with one it returns the token that code stands for,
-		// so the app needs six typed characters instead of a 64-character token.
+		// How another session on this machine gets the agent token. Restricted
+		// to the loopback peer address: the Host header is whatever the client
+		// chose to send, so a LAN host could claim 127.0.0.1 and register
+		// itself as one of this workstation's sessions.
+		if (url.pathname === "/join") {
+			const peer = server.requestIP(req)?.address ?? "";
+			const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+			if (!loopback) return new Response("forbidden", { status: 403 });
+			return Response.json({ v: PROTOCOL_VERSION, token: this.tokens.agent });
+		}
+
+		// Doubles as the discovery endpoint: an app asking this one port learns
+		// every session on the workstation. Without a code the payload holds no
+		// secret; with one it returns the token that code stands for.
 		if (url.pathname === "/pair") {
 			if (!this.config.local) return new Response("not found", { status: 404 });
 			const base = {
@@ -248,7 +315,7 @@ export class LocalServer {
 				url: `ws://${this.pairingHost()}:${this.port}`,
 				name: this.config.agentName,
 				agent: this.bridge.agentId,
-				cwd: this.bridge.info.cwd,
+				agents: this.registry.list().map((a) => ({ agentId: a.agentId, name: a.name })),
 			};
 
 			const code = url.searchParams.get("code");
@@ -261,14 +328,46 @@ export class LocalServer {
 			return Response.json({ ...base, role: redeemed.role, token: redeemed.token });
 		}
 
+		// Another session on this workstation joining as an agent. Loopback
+		// only, like /join: a session is by definition local, and the token
+		// alone should not let a remote host publish itself as one.
+		if (url.pathname === "/agent") {
+			const peer = server.requestIP(req)?.address ?? "";
+			const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+			if (!loopback) return new Response("forbidden", { status: 403 });
+			const token = extractToken(req, url);
+			if (!token || !constantTimeEquals(Buffer.from(token, "utf8"), this.tokens.agent)) {
+				return new Response("unauthorized", { status: 401 });
+			}
+			const upgraded = server.upgrade(req, {
+				data: {
+					kind: "agent" as const,
+					role: "control" as Role,
+					subscriptions: new Set<string>(),
+					agentId: undefined,
+					backpressureStreak: 0,
+					pingTimer: undefined,
+				},
+			});
+			if (!upgraded) return new Response("upgrade failed", { status: 400 });
+			return undefined;
+		}
+
 		if (url.pathname === "/client") {
 			const token = extractToken(req, url);
 			if (!token) return new Response("unauthorized", { status: 401 });
-			const role = matchToken(token, this.tokens);
+			const role = matchClientToken(token, this.tokens);
 			if (!role) return new Response("unauthorized", { status: 401 });
 
 			const upgraded = server.upgrade(req, {
-				data: { role, subscribed: false, backpressureStreak: 0, pingTimer: undefined },
+				data: {
+					kind: "client" as const,
+					role,
+					subscriptions: new Set<string>(),
+					agentId: undefined,
+					backpressureStreak: 0,
+					pingTimer: undefined,
+				},
 			});
 			if (!upgraded) return new Response("upgrade failed", { status: 400 });
 			return undefined;
@@ -278,14 +377,12 @@ export class LocalServer {
 	}
 
 	// -------------------------------------------------------------------
-	// WebSocket connection lifecycle.
+	// Connection lifecycle
 	// -------------------------------------------------------------------
 
 	private handleOpen(ws: LocalWebSocket): void {
 		this.connections.add(ws);
-		if (ws.data.role === "control") this.controlCount += 1;
-		else this.viewerCount += 1;
-		this.bridge.setViewerCounts({ control: this.controlCount, viewer: this.viewerCount });
+		if (ws.data.kind === "client") this.broadcastViewerCounts();
 
 		const pingCallback = () => {
 			try {
@@ -312,14 +409,35 @@ export class LocalServer {
 			if (ctx) ctx.clearTimer(ws.data.pingTimer);
 			else clearInterval(ws.data.pingTimer);
 		}
-		const sink = this.sinksByConnection.get(ws);
-		if (sink) {
-			this.bridge.detachSink(sink);
-			this.sinksByConnection.delete(ws);
+
+		if (ws.data.kind === "agent" && ws.data.agentId) {
+			const entry = this.registry.get(ws.data.agentId);
+			if (entry) {
+				// Withdraw anything that session was waiting on: nobody can
+				// answer it now.
+				for (const id of entry.pendingRequests.keys()) {
+					this.fanOut(ws.data.agentId, {
+						t: "request_cancel",
+						agentId: ws.data.agentId,
+						id,
+						reason: "shutdown",
+					});
+				}
+			}
+			this.registry.markOffline(ws.data.agentId, this.agentChannelFor(ws));
+			this.agentSockets.delete(ws.data.agentId);
+			this.broadcastRoster();
 		}
-		if (ws.data.role === "control") this.controlCount = Math.max(0, this.controlCount - 1);
-		else this.viewerCount = Math.max(0, this.viewerCount - 1);
-		this.bridge.setViewerCounts({ control: this.controlCount, viewer: this.viewerCount });
+
+		// Drop any command this connection was waiting on or answering for.
+		for (const [id, pending] of this.pendingCommands) {
+			if (pending.client === ws) {
+				clearTimeout(pending.timer);
+				this.pendingCommands.delete(id);
+			}
+		}
+
+		if (ws.data.kind === "client") this.broadcastViewerCounts();
 	}
 
 	private handleMessage(ws: LocalWebSocket, message: string | Buffer): void {
@@ -339,17 +457,107 @@ export class LocalServer {
 			return;
 		}
 		if (!parsed || typeof parsed !== "object") return;
-		const frame = parsed as ClientToServerFrame;
 
+		if (ws.data.kind === "agent") this.handleAgentFrame(ws, parsed as AgentToRelayFrame);
+		else this.handleClientFrame(ws, parsed as ClientToServerFrame);
+	}
+
+	// -------------------------------------------------------------------
+	// Guest agents
+	// -------------------------------------------------------------------
+
+	private agentChannelFor(ws: LocalWebSocket): AgentChannel {
+		return {
+			sendCommand: (id, cmd, args) => this.sendRaw(ws, { t: "command", id, cmd, args }),
+			sendResponse: (id, response) => this.sendRaw(ws, { t: "response", id, response }),
+			sendViewers: (counts) => this.sendRaw(ws, { t: "viewers", ...counts }),
+			close: (reason) => ws.close(1000, reason),
+		};
+	}
+
+	private handleAgentFrame(ws: LocalWebSocket, frame: AgentToRelayFrame): void {
+		switch (frame.t) {
+			case "hello": {
+				if (frame.protocol !== PROTOCOL_VERSION) {
+					ws.close(1002, `protocol mismatch: hub speaks ${PROTOCOL_VERSION}`);
+					return;
+				}
+				if (!frame.agentId) {
+					ws.close(1002, "hello requires an agentId");
+					return;
+				}
+				ws.data.agentId = frame.agentId;
+				const info: AgentInfo = { ...frame.info, agentId: frame.agentId, online: true };
+				this.registry.register(info, this.agentChannelFor(ws));
+				this.agentSockets.set(frame.agentId, ws);
+				this.sendRaw(ws, { t: "welcome", protocol: PROTOCOL_VERSION, agentId: frame.agentId });
+				this.broadcastRoster();
+				this.sendViewerCountsTo(frame.agentId);
+				return;
+			}
+			case "event": {
+				const entry = ws.data.agentId ? this.registry.get(ws.data.agentId) : undefined;
+				if (!entry || !ws.data.agentId) return;
+				entry.recordEvent(frame);
+				this.fanOut(ws.data.agentId, { ...frame, agentId: ws.data.agentId });
+				return;
+			}
+			case "state": {
+				const entry = ws.data.agentId ? this.registry.get(ws.data.agentId) : undefined;
+				if (!entry || !ws.data.agentId) return;
+				entry.state = frame.state;
+				this.fanOut(ws.data.agentId, { ...frame, agentId: ws.data.agentId });
+				return;
+			}
+			case "request": {
+				const entry = ws.data.agentId ? this.registry.get(ws.data.agentId) : undefined;
+				if (!entry || !ws.data.agentId) return;
+				entry.pendingRequests.set(frame.id, frame.request);
+				this.fanOut(ws.data.agentId, { ...frame, agentId: ws.data.agentId });
+				return;
+			}
+			case "request_cancel": {
+				const entry = ws.data.agentId ? this.registry.get(ws.data.agentId) : undefined;
+				if (!entry || !ws.data.agentId) return;
+				entry.pendingRequests.delete(frame.id);
+				this.fanOut(ws.data.agentId, { ...frame, agentId: ws.data.agentId });
+				return;
+			}
+			case "reply": {
+				this.deliverReply(
+					frame.id,
+					frame.ok ? { ok: true, data: frame.data } : { ok: false, error: frame.error ?? "failed" },
+				);
+				return;
+			}
+		}
+	}
+
+	// -------------------------------------------------------------------
+	// Clients
+	// -------------------------------------------------------------------
+
+	private handleClientFrame(ws: LocalWebSocket, frame: ClientToServerFrame): void {
 		switch (frame.t) {
 			case "hello":
-				this.handleHello(ws, frame.protocol);
+				if (frame.protocol !== PROTOCOL_VERSION) {
+					ws.close(1002, `protocol mismatch: server speaks ${PROTOCOL_VERSION}`);
+					return;
+				}
+				this.send(ws, {
+					t: "welcome",
+					protocol: PROTOCOL_VERSION,
+					clientId: crypto.randomBytes(8).toString("hex"),
+					role: ws.data.role,
+					agents: this.registry.list(),
+				});
 				return;
 			case "subscribe":
-				this.handleSubscribe(ws);
+				this.handleSubscribe(ws, frame.agentId, frame.since ?? 0);
 				return;
 			case "unsubscribe":
-				this.handleUnsubscribe(ws);
+				ws.data.subscriptions.delete(frame.agentId);
+				this.broadcastViewerCounts();
 				return;
 			case "command":
 				this.handleCommand(ws, frame);
@@ -360,48 +568,40 @@ export class LocalServer {
 		}
 	}
 
-	private handleHello(ws: LocalWebSocket, protocol: number): void {
-		if (protocol !== PROTOCOL_VERSION) {
-			ws.close(1002, `protocol mismatch: server speaks ${PROTOCOL_VERSION}`);
-			return;
+	private handleSubscribe(ws: LocalWebSocket, agentId: string, since: number): void {
+		const entry = this.registry.get(agentId);
+		if (!entry) return;
+		ws.data.subscriptions.add(agentId);
+
+		// State first, then anything still awaiting an answer, then the events
+		// this client has not seen: the order the protocol specifies.
+		if (entry.state) this.send(ws, { t: "state", agentId, state: entry.state });
+		for (const [id, request] of entry.pendingRequests) {
+			this.send(ws, { t: "request", agentId, id, request });
 		}
-		this.send(ws, {
-			t: "welcome",
-			protocol: PROTOCOL_VERSION,
-			clientId: crypto.randomBytes(8).toString("hex"),
-			role: ws.data.role,
-			agents: [this.bridge.info],
-		});
+		for (const retained of entry.eventsSince(since)) {
+			this.send(ws, { t: "event", agentId, seq: retained.seq, event: retained.event });
+		}
+		this.broadcastViewerCounts();
 	}
 
-	private handleSubscribe(ws: LocalWebSocket): void {
-		if (ws.data.subscribed) return;
-		ws.data.subscribed = true;
-
-		const sink: OutboundSink = {
-			sendEvent: (frame) => this.send(ws, { ...frame, agentId: this.bridge.agentId }),
-			sendState: (frame) => this.send(ws, { ...frame, agentId: this.bridge.agentId }),
-			sendRequest: (frame) => this.send(ws, { ...frame, agentId: this.bridge.agentId }),
-			sendRequestCancel: (frame) => this.send(ws, { ...frame, agentId: this.bridge.agentId }),
-		};
-		this.sinksByConnection.set(ws, sink);
-		// attachSink replays retained state and pending requests immediately;
-		// this ring replay covers events, which the bridge itself does not
-		// retain beyond the single latest state snapshot.
-		this.bridge.attachSink(sink);
-		for (const event of this.eventRing) {
-			this.send(ws, { ...event, agentId: this.bridge.agentId });
+	// A client that named no agent is talking to a workstation it assumes has
+	// one, which is true until a second session joins. Resolving to the sole
+	// agent keeps that client working; naming one is required once there are
+	// several, since guessing would route commands to the wrong session.
+	private resolveTarget(ws: LocalWebSocket, id: string, agentId: string | undefined): AgentEntry | undefined {
+		const roster = this.registry.list();
+		const resolved = agentId ?? (roster.length === 1 ? roster[0]?.agentId : undefined);
+		if (!resolved) {
+			this.send(ws, { t: "reply", id, ok: false, error: "this workstation has several sessions, name one" });
+			return undefined;
 		}
-	}
-
-	private handleUnsubscribe(ws: LocalWebSocket): void {
-		if (!ws.data.subscribed) return;
-		ws.data.subscribed = false;
-		const sink = this.sinksByConnection.get(ws);
-		if (sink) {
-			this.bridge.detachSink(sink);
-			this.sinksByConnection.delete(ws);
+		const entry = this.registry.get(resolved);
+		if (!entry || !entry.online) {
+			this.send(ws, { t: "reply", id, ok: false, error: "agent offline" });
+			return undefined;
 		}
+		return entry;
 	}
 
 	private handleCommand(ws: LocalWebSocket, frame: FrameCommand): void {
@@ -409,19 +609,19 @@ export class LocalServer {
 			this.send(ws, { t: "reply", id: frame.id, ok: false, error: "read-only connection" });
 			return;
 		}
-		executeCommand(this.bridge, this.pi, this.config, frame.cmd, frame.args)
-			.then((result: CommandResult) => {
-				if (result.ok) this.send(ws, { t: "reply", id: frame.id, ok: true, data: result.data });
-				else this.send(ws, { t: "reply", id: frame.id, ok: false, error: result.error });
-			})
-			.catch((err: unknown) => {
-				this.send(ws, {
-					t: "reply",
-					id: frame.id,
-					ok: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			});
+		const entry = this.resolveTarget(ws, frame.id, frame.agentId);
+		if (!entry) return;
+
+		// A hub-scoped id keeps two clients' identical ids apart, and lets a
+		// late reply find the client that asked.
+		this.commandSeq += 1;
+		const hubId = `h${this.commandSeq}`;
+		const timer = setTimeout(() => {
+			this.pendingCommands.delete(hubId);
+			this.send(ws, { t: "reply", id: frame.id, ok: false, error: "command timed out" });
+		}, COMMAND_TIMEOUT_MS);
+		this.pendingCommands.set(hubId, { client: ws, clientCommandId: frame.id, timer });
+		entry.channel.sendCommand(hubId, frame.cmd, frame.args);
 	}
 
 	private handleResponse(ws: LocalWebSocket, frame: FrameResponse): void {
@@ -429,25 +629,81 @@ export class LocalServer {
 			this.send(ws, { t: "reply", id: frame.id, ok: false, error: "read-only connection" });
 			return;
 		}
-		const outcome = this.bridge.submitResponse(frame.id, frame.response);
-		if (outcome.ok) this.send(ws, { t: "reply", id: frame.id, ok: true, data: { accepted: true } });
-		else this.send(ws, { t: "reply", id: frame.id, ok: false, error: outcome.error });
+		const entry = this.resolveTarget(ws, frame.id, frame.agentId);
+		if (!entry) return;
+		if (!entry.pendingRequests.has(frame.id)) {
+			this.send(ws, { t: "reply", id: frame.id, ok: false, error: "request already answered" });
+			return;
+		}
+		entry.pendingRequests.delete(frame.id);
+		entry.channel.sendResponse(frame.id, frame.response);
+		this.send(ws, { t: "reply", id: frame.id, ok: true, data: { accepted: true } });
+	}
+
+	private deliverReply(hubId: string, result: CommandResult): void {
+		const pending = this.pendingCommands.get(hubId);
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		this.pendingCommands.delete(hubId);
+		if (result.ok) {
+			this.send(pending.client, { t: "reply", id: pending.clientCommandId, ok: true, data: result.data });
+		} else {
+			this.send(pending.client, { t: "reply", id: pending.clientCommandId, ok: false, error: result.error });
+		}
 	}
 
 	// -------------------------------------------------------------------
-	// Outbound framing. Every client-facing frame carries agentId (see
-	// handleSubscribe's sink) so the app's parsing stays uniform across the
-	// relay and direct transports; the reply frame family has no agentId in
-	// the wire type and is sent as-is.
+	// Fan-out
 	// -------------------------------------------------------------------
 
+	private fanOut(agentId: string, frame: ServerToClientFrame): void {
+		for (const ws of this.connections) {
+			if (ws.data.kind !== "client") continue;
+			if (!ws.data.subscriptions.has(agentId)) continue;
+			this.send(ws, frame);
+		}
+	}
+
+	private broadcastRoster(): void {
+		const agents = this.registry.list();
+		for (const ws of this.connections) {
+			if (ws.data.kind !== "client") continue;
+			this.send(ws, { t: "agents", agents });
+		}
+	}
+
+	// Every agent hears how many clients are watching it, including the host's
+	// own session, which reports through the bridge instead of a socket.
+	private broadcastViewerCounts(): void {
+		for (const info of this.registry.list()) {
+			this.sendViewerCountsTo(info.agentId);
+		}
+	}
+
+	private sendViewerCountsTo(agentId: string): void {
+		let control = 0;
+		let viewer = 0;
+		for (const ws of this.connections) {
+			if (ws.data.kind !== "client") continue;
+			if (!ws.data.subscriptions.has(agentId)) continue;
+			if (ws.data.role === "control") control += 1;
+			else viewer += 1;
+		}
+		if (agentId === this.bridge.agentId) {
+			this.bridge.setViewerCounts({ control, viewer });
+			return;
+		}
+		this.registry.get(agentId)?.channel.sendViewers({ control, viewer });
+	}
+
 	// Bun's send() returns 0 (dropped), -1 (queued under backpressure), or the
-	// byte count sent immediately. There is no direct "frames queued" counter,
-	// so a run of consecutive backpressured sends approximates the protocol's
-	// "outbound queue exceeds 256 frames" limit: each -1 return means this
-	// frame joined the client's unread buffer, and `drain` (above) means that
-	// buffer emptied, so the streak resets there and on any immediate send.
+	// byte count sent immediately. A run of consecutive backpressured sends
+	// approximates the protocol's outbound queue limit.
 	private send(ws: LocalWebSocket, frame: ServerToClientFrame): void {
+		this.sendRaw(ws, frame);
+	}
+
+	private sendRaw(ws: LocalWebSocket, frame: unknown): void {
 		if (ws.readyState !== 1) return;
 		const status = ws.send(JSON.stringify(frame));
 		if (status > 0) {
@@ -462,3 +718,5 @@ export class LocalServer {
 		}
 	}
 }
+
+export type { AgentEntry };

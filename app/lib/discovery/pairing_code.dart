@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../protocol.dart';
-import 'direct_discovery.dart' show discoveryPortCount, discoveryPortStart;
+import 'direct_discovery.dart' show discoveryPort;
 
 /// Outcome of one redemption attempt. A sealed result type rather than a
 /// thrown exception, because the caller must render three cases
@@ -163,35 +163,19 @@ Future<PairingCodeOutcome> redeemPairingCode({
   }
 }
 
-/// Redeems [code] against every port in the plugin's scan range on [host],
-/// in parallel, for the case where the user has not run discovery first and
-/// so does not know which port the session is on. The code is a secret the
-/// right session's local server recognizes; every other live session on the
-/// host answers the same request with its own 404 rejection, so the first
-/// success wins and a rejection is only reported if nothing succeeded.
+/// Redeems [code] against the workstation's single discovery port. One
+/// session hosts that port for the whole machine, so there is nothing to
+/// search: the host either recognizes the code or rejects it.
 Future<PairingCodeOutcome> redeemPairingCodeOnHost({
   required String host,
   required String code,
   Duration timeout = const Duration(seconds: 10),
-}) async {
-  final results = await Future.wait(
-    List.generate(discoveryPortCount, (i) => discoveryPortStart + i).map(
-      (port) =>
-          redeemPairingCode(host: host, port: port, code: code, timeout: timeout),
-    ),
-  );
-  for (final result in results) {
-    if (result is PairingCodeSuccess) return result;
-  }
-  for (final result in results) {
-    if (result is PairingCodeRejected) return result;
-  }
-  return PairingCodeNetworkError(
+}) {
+  return redeemPairingCode(
     host: host,
-    port: discoveryPortStart,
-    reason:
-        'no session answered on ports $discoveryPortStart-'
-        '${discoveryPortStart + discoveryPortCount - 1}',
+    port: discoveryPort,
+    code: code,
+    timeout: timeout,
   );
 }
 

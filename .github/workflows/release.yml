@@ -111,29 +111,22 @@ jobs:
       - run: flutter pub get
         working-directory: app
 
-      # The android platform folder was just regenerated from `flutter create`,
-      # so the launcher icon needs regenerating too: it lives under
-      # android/app/src/main/res, which is gitignored and not restored above.
-      - name: Generate the launcher icon
-        working-directory: app
-        run: |
-          dart run flutter_launcher_icons
-          # A silent failure here ships Flutter's default icon, which looks
-          # like a successful build until someone installs it.
-          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-
-      # Same reason: res/drawable is regenerated and gitignored. ImageMagick is
-      # not on the runner, so the mark is drawn by a Dart tool instead.
-      - name: Generate the notification icon
+      # res/ was just wiped by `flutter create`, so every generated icon has to
+      # be rebuilt here. One step, because the order matters: the Dart tool
+      # writes the adaptive foreground that flutter_launcher_icons then
+      # consumes, and running them the other way round ships the previous mark.
+      - name: Generate the icons
         working-directory: app
         run: |
           dart run tool/generate_notification_icon.dart
+          dart run flutter_launcher_icons
+          # Existence alone proves little: a generated icon that is present but
+          # invisible is how a white-on-white launcher icon once shipped.
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           test -f android/app/src/main/res/drawable-xxxhdpi/ic_notification.png
           test -f android/app/src/main/res/drawable-mdpi/ic_notification.png
           test -f android/app/src/main/res/raw/keep.xml
-          # A generated icon that is present but invisible passes every test
-          # above, which is how a white square once shipped.
           dart run tool/check_icons.dart
       - run: flutter build apk --release
         working-directory: app

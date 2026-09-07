@@ -1,6 +1,8 @@
-// Outbound uplink to the relay's /agent endpoint (docs/protocol.md, "Relayed").
-// Implements OutboundSink so SessionBridge can broadcast to it without knowing
-// this is a relay connection rather than a local server client.
+// Outbound uplink to an /agent endpoint (docs/protocol.md, "Relayed"). The
+// endpoint is either a relay or another session's local server acting as the
+// host for this workstation: the frames are identical, so one client serves
+// both. Implements OutboundSink so SessionBridge can broadcast to it without
+// knowing which it is.
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type {
@@ -48,20 +50,34 @@ export class RelayClient implements OutboundSink {
 	private readonly pi: ExtensionAPI;
 	private readonly url: string;
 	private readonly token: string;
+	private readonly label: string;
 	private socket: WebSocket | undefined;
 	private stopped = false;
 	private welcomed = false;
 	private backoffMs = BACKOFF_INITIAL_MS;
 	private reconnectTimer: Timer | undefined;
 
-	constructor(bridge: SessionBridge, config: RemoteConfig, pi: ExtensionAPI) {
+	// Called when the connection drops, before a reconnect is scheduled.
+	// A guest uses it to re-fetch the host's token: the session that takes over
+	// the port mints its own, so the old one is rejected from then on.
+	onDisconnect: (() => void) | undefined;
+
+	// `endpoint` overrides config.relay, which is how a session that lost the
+	// port race attaches to the session that won it.
+	constructor(
+		bridge: SessionBridge,
+		config: RemoteConfig,
+		pi: ExtensionAPI,
+		endpoint?: { url: string; token: string; label: string },
+	) {
 		this.bridge = bridge;
 		this.config = config;
 		this.pi = pi;
-		if (!config.relay) throw new Error("RelayClient requires config.relay");
-		const base = config.relay.url.replace(/\/+$/, "");
-		this.url = `${base}/agent`;
-		this.token = config.relay.token;
+		const source = endpoint ?? (config.relay ? { ...config.relay, label: "relay" } : undefined);
+		if (!source) throw new Error("RelayClient requires a relay or an explicit endpoint");
+		this.url = `${source.url.replace(/\/+$/, "")}/agent`;
+		this.token = source.token;
+		this.label = source.label;
 	}
 
 	get connected(): boolean {
@@ -115,12 +131,19 @@ export class RelayClient implements OutboundSink {
 			// The close handler drives reconnection; onerror only needs to avoid
 			// throwing so a socket-level failure never becomes an unhandled
 			// rejection.
-			this.bridge.recordError("relay connection error");
+			this.bridge.recordError(`${this.label} connection error`);
 		};
 		socket.onclose = () => {
 			this.welcomed = false;
 			this.bridge.detachSink(this);
 			if (this.socket === socket) this.socket = undefined;
+			if (this.stopped) return;
+			if (this.onDisconnect) {
+				// The owner rebuilds this client against whoever holds the port
+				// now, so this instance does not retry with a stale token.
+				this.onDisconnect();
+				return;
+			}
 			this.scheduleReconnect();
 		};
 	}
@@ -156,7 +179,7 @@ export class RelayClient implements OutboundSink {
 			// plugin disagree on the wire contract, and retrying in a tight
 			// loop cannot fix that. Record the error and stop trying.
 			this.bridge.recordError(
-				`relay protocol mismatch: plugin speaks ${PROTOCOL_VERSION}, relay welcomed with ${frame.protocol}`,
+				`${this.label} protocol mismatch: plugin speaks ${PROTOCOL_VERSION}, got ${frame.protocol}`,
 			);
 			this.stop();
 			return;

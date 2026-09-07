@@ -27,11 +27,17 @@ port. Use this across networks.
 ### Direct
 
 ```
-omp process                                      phone
+omp process (host)                               phone
 +-------------------------------+              +-------------+
 | omp-remote plugin             | <-- WS ----- | OMPRemote   |
-|   local server on :8788       |              |  (client)   |
-|   path /client                |              +-------------+
+|   server on :8788             |              |  (client)   |
+|   /client  /agent  /pair      |              +-------------+
++-------------------------------+
+        ^
+        | WS /agent
++-------------------------------+
+| omp-remote plugin (guest)     |
+|   another session, same box   |
 +-------------------------------+
 ```
 
@@ -45,16 +51,23 @@ reachable at the same time.
 
 ### Several sessions on one workstation
 
-Each omp session serves its own local server. The configured port is a
-starting point: a session that finds it taken moves up, scanning 16 ports, so
-a second session comes up beside the first instead of failing. A transport
-that cannot start at all is reported and left dormant, never escalated into a
-session error.
+One port carries them all. The first session to bind it becomes the host and
+serves every client on the machine; a session that finds the port taken dials
+the host on `/agent` instead, exactly as it would dial a relay. So the app
+asks one address and sees every session, and the frames are the same either
+way.
 
-Agent ids are distinct per session, since a relay treats a repeated id as a
-reconnect and evicts the older connection. The default appends a short
-process-derived suffix to host and directory, as in
-`kim-thinkpad/omp-remote#k69j`.
+The host is whoever holds the port, and nothing else. When it exits, the
+remaining sessions race to bind, one wins, and the others rejoin it. A guest
+polls for that every few seconds, so a lost host costs seconds of visibility
+rather than requiring a restart.
+
+`/agent` and `/join` are loopback only. A session is by definition local, and
+a peer on the network must not be able to publish itself as one.
+
+Agent ids are distinct per session, since a repeated id reads as a reconnect
+and evicts the older connection. The default appends a short process-derived
+suffix to host and directory, as in `kim-thinkpad/omp-remote#k69j`.
 
 ## Endpoints
 
@@ -66,13 +79,15 @@ Relay:
 | `/client`  | GET    | WebSocket upgrade for an OMPRemote app |
 | `/healthz` | GET    | Liveness probe, returns `ok`           |
 
-Plugin local server:
+Plugin, whichever session holds the port:
 
-| Path       | Method | Purpose                                |
-| ---------- | ------ | -------------------------------------- |
-| `/client`  | GET    | WebSocket upgrade for an OMPRemote app |
-| `/pair`    | GET    | Pairing payload, see Pairing           |
-| `/healthz` | GET    | Liveness probe, returns `ok`           |
+| Path       | Method | Purpose                                       |
+| ---------- | ------ | --------------------------------------------- |
+| `/client`  | GET    | WebSocket upgrade for an OMPRemote app        |
+| `/agent`   | GET    | Another session on this machine, loopback only |
+| `/pair`    | GET    | Pairing payload and roster, see Pairing       |
+| `/join`    | GET    | Agent token for a local session, loopback only |
+| `/healthz` | GET    | Liveness probe, returns `ok`                  |
 
 ## Roles
 
@@ -173,17 +188,25 @@ relayed client cannot reach the local server to redeem one.
 
 ### Discovery
 
-`GET /pair` without a code returns the same payload minus `token` and `role`.
-It opens no listener of its own, so a client finds the sessions on a host by
-asking each port the server's own scan range covers, 8788 through 8803, and
-keeping the replies that parse with `v` of `2`. `cwd` is what distinguishes two
-sessions on one workstation.
+`GET /pair` without a code returns the payload minus `token`, plus the roster
+of every session the host serves. One request to one port is the whole of
+discovery: there is no scan and no second listener.
 
 ```jsonc
 { "v": 2, "t": "direct", "url": "ws://100.64.0.3:8788", "name": "omp-remote",
-  "agent": "kim-thinkpad/omp-remote#k69j", "cwd": "/home/kim/proj",
+  "agent": "kim-thinkpad/omp-remote#k69j",
+  "agents": [
+    { "agentId": "kim-thinkpad/omp-remote#k69j", "name": "omp-remote" },
+    { "agentId": "kim-thinkpad/api#m2rx", "name": "api" }
+  ],
   "role": "control" }
 ```
+
+`agent` names the host's own session and is kept for clients that predate the
+roster. Working directories are deliberately absent: this endpoint answers
+anyone who can reach the port, and a filesystem path names a project and a
+user to the whole network. The agent id already carries a project basename
+and a unique suffix, which is enough to tell two sessions apart.
 
 No token appears in a codeless response. The token travels only in the QR, the
 link, or a redeemed code.

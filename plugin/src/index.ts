@@ -12,6 +12,9 @@ import { registerRemoteOmpCommand } from "./pairing.js";
 import { safeStringifyInput, truncateText, TOOL_INPUT_MAX_BYTES } from "./normalize.js";
 
 const APPROVAL_TIMEOUT_MS = 120000;
+// How often a guest checks whether the port has been freed, so the session
+// holding it exiting does not leave the workstation unreachable.
+const HOST_POLL_MS = 5000;
 
 // Maps a tool name to the risk tier shown in the remote approval prompt.
 // Mirrors pi-agent-core's ToolTier vocabulary ("read" | "write" | "exec") so
@@ -22,7 +25,16 @@ function toolRisk(toolName: string): string {
 	return "read";
 }
 
+// Set once the factory has run in this process. A directory named on the
+// command line can be resolved both by its package manifest and by a scan of
+// its contents, which loads this module twice: two servers on two ports, and
+// a pairing code registered with whichever one the user is not talking to.
+let loaded = false;
+
 export default function ompRemote(pi: ExtensionAPI): void {
+	if (loaded) return;
+	loaded = true;
+
 	let config: RemoteConfig;
 	try {
 		config = readRemoteConfig();
@@ -52,10 +64,81 @@ export default function ompRemote(pi: ExtensionAPI): void {
 	const localServer = config.local ? new LocalServer(bridge, config, pi) : undefined;
 	const alwaysApprovedTools = new Set<string>();
 
-	// A transport that cannot start is this extension's problem, not the
-	// session's. Record it and stay dormant on that transport instead of
-	// throwing out of the handler, which would surface as a session error.
+	// One port serves the whole workstation: the first session to bind it hosts
+	// every other, and a session that cannot bind joins the host as a guest
+	// instead of taking a port of its own. A transport that fails either way is
+	// recorded and left dormant rather than thrown, which would surface as a
+	// session error.
 	let localStarted = false;
+	let guestClient: RelayClient | undefined;
+	let takeoverTimer: Timer | undefined;
+
+	// Tries to become the host. Returns true once this session owns the port.
+	const tryHost = (): boolean => {
+		if (localStarted || !localServer) return localStarted;
+		try {
+			localServer.start();
+			localStarted = true;
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	const joinHost = async (ctx: ExtensionContext): Promise<void> => {
+		const local = config.local;
+		if (!local || localStarted) return;
+		try {
+			const response = await fetch(`http://127.0.0.1:${local.port}/join`, {
+				signal: AbortSignal.timeout(2000),
+			});
+			if (!response.ok) throw new Error(`host refused the join: HTTP ${response.status}`);
+			const payload = (await response.json()) as { token?: unknown };
+			if (typeof payload.token !== "string") throw new Error("host returned no token");
+			guestClient?.stop();
+			guestClient = new RelayClient(bridge, config, pi, {
+				url: `ws://127.0.0.1:${local.port}`,
+				token: payload.token,
+				label: "workstation hub",
+			});
+			// A dropped link means the host exited. The next poll either makes
+			// this session the host or rejoins whoever took over; retrying with
+			// the old token would just be refused, since the new host mints its
+			// own.
+			guestClient.onDisconnect = () => {
+				guestClient?.stop();
+				guestClient = undefined;
+			};
+			guestClient.start();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			bridge.recordError(`workstation hub: ${message}`);
+		}
+	};
+
+	// One poll drives both halves of the handover: a guest first tries to
+	// become the host, and failing that makes sure it is still attached to
+	// whoever is. Without the second half a session stays alive but invisible
+	// after the host it joined exits.
+	const watchForTakeover = (ctx: ExtensionContext): void => {
+		if (takeoverTimer || !localServer) return;
+		const tick = () => {
+			if (localStarted) return;
+			if (tryHost()) {
+				guestClient?.stop();
+				guestClient = undefined;
+				if (takeoverTimer) {
+					ctx.clearTimer(takeoverTimer);
+					takeoverTimer = undefined;
+				}
+				ctx.ui.notify("omp-remote is now hosting this workstation's port", "info");
+				return;
+			}
+			if (!guestClient) void joinHost(ctx);
+		};
+		takeoverTimer = ctx.setInterval(tick, HOST_POLL_MS);
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		try {
 			relayClient?.start();
@@ -64,17 +147,15 @@ export default function ompRemote(pi: ExtensionAPI): void {
 			bridge.recordError(`relay: ${message}`);
 			ctx.ui.notify(`omp-remote relay uplink failed: ${message}`, "warning");
 		}
-		try {
-			localServer?.start();
-			localStarted = localServer !== undefined;
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			bridge.recordError(`local server: ${message}`);
-			ctx.ui.notify(`omp-remote local server failed: ${message}`, "warning");
+		if (localServer && !tryHost()) {
+			// The port is taken, so another session hosts it. Join that one and
+			// stand by to take over if it goes away.
+			await joinHost(ctx);
+			watchForTakeover(ctx);
 		}
 	});
 
-	registerRemoteOmpCommand(pi, bridge, config, () => localServer);
+	registerRemoteOmpCommand(pi, bridge, config, () => (localStarted ? localServer : undefined));
 
 	pi.registerCommand("remote", {
 		description: "Show omp-remote transport status",
@@ -90,11 +171,16 @@ export default function ompRemote(pi: ExtensionAPI): void {
 
 			if (!config.local) {
 				lines.push("local: not configured");
-			} else if (!localStarted) {
-				lines.push("local: not running");
+			} else if (localStarted && localServer) {
+				const counts = localServer.clientCounts;
+				const others = localServer.agentCount - 1;
+				const hosting = others > 0 ? `, hosting ${others} other session${others === 1 ? "" : "s"}` : "";
+				lines.push(`local: hosting port ${localServer.port} (control ${counts.control}, viewer ${counts.viewer}${hosting})`);
+			} else if (guestClient) {
+				const state = guestClient.connected ? "connected" : "connecting";
+				lines.push(`local: joined the session hosting port ${config.local.port} (${state})`);
 			} else {
-				const counts = localServer?.clientCounts ?? { control: 0, viewer: 0 };
-				lines.push(`local: port ${localServer?.port} (control ${counts.control}, viewer ${counts.viewer})`);
+				lines.push("local: not running");
 			}
 
 			const attached = bridge.getCurrentState().viewers;
@@ -137,7 +223,13 @@ export default function ompRemote(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async () => {
 		relayClient?.stop();
+		guestClient?.stop();
 		localServer?.stop();
+		if (takeoverTimer) {
+			const ctx = bridge.getLatestCtx();
+			if (ctx) ctx.clearTimer(takeoverTimer);
+			takeoverTimer = undefined;
+		}
 		bridge.cancelAllRequests("shutdown");
 	});
 }

@@ -36,7 +36,7 @@ downstream re-reads the environment.
 | `OMP_REMOTE_CONTROL_TOKEN`    | unset                             | Relay's `OMP_RELAY_CONTROL_TOKEN`. Only used to build a relay control pairing link. |
 | `OMP_REMOTE_VIEWER_TOKEN`     | unset                             | Relay's `OMP_RELAY_VIEWER_TOKEN`. Only used to build a relay viewer pairing link. |
 | `OMP_REMOTE_LOCAL`            | `1` (enabled)                     | Set to `0` to disable the plugin's own local WebSocket server.          |
-| `OMP_REMOTE_LOCAL_PORT`       | `8788`                            | First port the local server tries. A taken port moves up, scanning 16. |
+| `OMP_REMOTE_LOCAL_PORT`       | `8788`                            | The port every session on this machine shares. The first to bind it serves the rest. |
 | `OMP_REMOTE_LOCAL_BIND`       | `0.0.0.0`                         | Bind address for the local server.                                      |
 | `OMP_REMOTE_AGENT_ID`         | `<hostname>/<cwd basename>#<pid>` | Agent id advertised in `hello`/roster entries and pairing links.        |
 | `OMP_REMOTE_ALLOW_BASH`       | `0` (disabled)                    | Set to `1` or `true` to allow the `bash` command to run real shell commands on this workstation. |
@@ -115,17 +115,18 @@ take the whole session down with it.
 ### Direct
 
 The plugin runs its own WebSocket server (`OMP_REMOTE_LOCAL_PORT`, default
-`8788`) serving `/client`, `/pair`, and `/healthz` exactly as
-`docs/protocol.md` specifies for the plugin's local server. Two tokens are
-minted at server startup, one for `control` and one for `viewer`, and handed
-out only through a redeemed pairing code or a `/remote-omp` link, never
-logged. Use this on a LAN or over Tailscale, where the phone can already
-reach the workstation directly; no relay or third party is involved.
+`8788`) serving `/client`, `/agent`, `/pair`, `/join`, and `/healthz` as
+`docs/protocol.md` specifies. Tokens are minted at startup and handed out only
+through a redeemed pairing code or a `/remote-omp` link, never logged. Use this
+on a LAN or over Tailscale, where the phone can already reach the workstation;
+no relay or third party is involved.
 
-Several sessions coexist: each takes the next free port in a 16-port range
-from the configured one, and `GET /pair` without a code names the session's
-working directory, so a client sweeping that range lists them all. Discovery
-opens no additional port.
+Every session on the machine shares that one port. The first to bind it hosts
+the rest, which attach over `/agent` and appear in the same roster the app
+would see through a relay. `/agent` and `/join` accept loopback only, so a
+peer on the network cannot publish itself as one of this machine's sessions.
+When the host exits, a remaining session takes the port within seconds and the
+others rejoin it.
 
 ## Interactive requests
 

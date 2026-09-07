@@ -26,8 +26,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
   final _hostController = TextEditingController();
   final _codeController = TextEditingController();
   List<String> _recentHosts = const [];
-  List<DiscoveredSession> _discovered = const [];
-  DiscoveredSession? _selected;
+  DiscoveredWorkstation? _found;
   bool _discovering = false;
   bool _connecting = false;
   bool _searchedOnce = false;
@@ -49,20 +48,21 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
   void _pickRecentHost(String host) {
     setState(() {
       _hostController.text = host;
-      _selected = null;
-      _discovered = const [];
+      _found = null;
       _searchedOnce = false;
     });
   }
 
   void _clearSelection() {
     setState(() {
-      _selected = null;
-      _discovered = const [];
+      _found = null;
       _searchedOnce = false;
     });
   }
 
+  /// Confirms a workstation is listening and shows what it serves. One session
+  /// hosts the port for the whole machine, so this is a single request and the
+  /// result is informational: the code decides which session is paired.
   Future<void> _findSessions() async {
     final host = _hostController.text.trim();
     if (host.isEmpty) {
@@ -72,19 +72,15 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
     setState(() {
       _discovering = true;
       _error = null;
-      _discovered = const [];
+      _found = null;
     });
-    final results = await discoverSessions(host);
+    final result = await discoverWorkstation(host);
     if (!mounted) return;
     setState(() {
       _discovering = false;
-      _discovered = results;
+      _found = result;
       _searchedOnce = true;
     });
-  }
-
-  void _selectSession(DiscoveredSession session) {
-    setState(() => _selected = session);
   }
 
   Future<void> _connect() async {
@@ -95,10 +91,9 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
     }
     final code = codeInput.code!;
 
-    final selected = _selected;
-    final host = selected?.host ?? _hostController.text.trim();
-    if (selected == null && host.isEmpty) {
-      setState(() => _error = 'Enter a host, or pick a discovered session.');
+    final host = _hostController.text.trim();
+    if (host.isEmpty) {
+      setState(() => _error = 'Enter the address shown on your workstation.');
       return;
     }
 
@@ -107,9 +102,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
       _error = null;
     });
 
-    final outcome = selected != null
-        ? await redeemPairingCode(host: selected.host, port: selected.port, code: code)
-        : await redeemPairingCodeOnHost(host: host, code: code);
+    final outcome = await redeemPairingCodeOnHost(host: host, code: code);
 
     if (!mounted) return;
     setState(() => _connecting = false);
@@ -165,96 +158,83 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             const Text(
-              'Type the host running the session, then the six-character '
-              'code shown by /remote-omp. Or find sessions on the host '
-              'first and pick one, so only the code remains to type.',
+              'Type the address and the six-character code shown by '
+              '/remote-omp on your workstation. The code decides which '
+              'session you connect to.',
             ),
             const SizedBox(height: 16),
-            if (_selected == null) ...[
-              if (_recentHosts.isNotEmpty) ...[
-                Text('Recent hosts', style: theme.textTheme.labelLarge),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final host in _recentHosts)
-                      ActionChip(
-                        label: Text(host),
-                        onPressed: () => _pickRecentHost(host),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
-              TextField(
-                controller: _hostController,
-                decoration: const InputDecoration(
-                  labelText: 'Host',
-                  hintText: '100.64.0.3 or my-laptop.local',
-                ),
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                enableSuggestions: false,
-                textInputAction: TextInputAction.done,
+            if (_recentHosts.isNotEmpty) ...[
+              Text('Recent hosts', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final host in _recentHosts)
+                    ActionChip(
+                      label: Text(host),
+                      onPressed: () => _pickRecentHost(host),
+                    ),
+                ],
               ),
               const SizedBox(height: 12),
-              Semantics(
-                button: true,
-                label: 'Find sessions on this host',
-                child: OutlinedButton.icon(
-                  onPressed: _discovering ? null : _findSessions,
-                  icon: _discovering
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.search),
-                  label: Text(_discovering ? 'Searching...' : 'Find sessions'),
+            ],
+            TextField(
+              controller: _hostController,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+                hintText: '100.64.0.3 or my-laptop.local',
+              ),
+              keyboardType: TextInputType.url,
+              autocorrect: false,
+              enableSuggestions: false,
+              textInputAction: TextInputAction.done,
+            ),
+            const SizedBox(height: 12),
+            Semantics(
+              button: true,
+              label: 'Check this address for sessions',
+              child: OutlinedButton.icon(
+                onPressed: _discovering ? null : _findSessions,
+                icon: _discovering
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.search),
+                label: Text(_discovering ? 'Checking...' : 'Check address'),
+              ),
+            ),
+            if (_searchedOnce && !_discovering && _found == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Nothing answered at ${_hostController.text.trim()}. Check '
+                  'the address, and that omp is running there.',
+                  style: theme.textTheme.bodySmall,
                 ),
               ),
-              if (_searchedOnce && !_discovering && _discovered.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'No sessions found on ${_hostController.text.trim()}.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              if (_discovered.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Found sessions', style: theme.textTheme.labelLarge),
-                for (final session in _discovered)
-                  Semantics(
-                    button: true,
-                    label:
-                        '${session.name}, ${session.cwd}, port ${session.port}',
-                    child: ListTile(
-                      leading: const Icon(Icons.dns_outlined),
-                      title: Text(session.name),
-                      subtitle: Text('${session.cwd}\nPort ${session.port}'),
-                      isThreeLine: true,
-                      onTap: () => _selectSession(session),
-                    ),
-                  ),
-              ],
-            ] else ...[
+            if (_found != null) ...[
+              const SizedBox(height: 12),
               Card(
                 child: ListTile(
-                  leading: const Icon(Icons.dns_outlined),
-                  title: Text(_selected!.name),
-                  subtitle: Text(
-                    '${_selected!.cwd}\n${_selected!.host}:${_selected!.port}',
+                  leading: const Icon(Icons.check_circle_outline),
+                  title: Text(
+                    _found!.sessions.length == 1
+                        ? '1 session found'
+                        : '${_found!.sessions.length} sessions found',
                   ),
-                  isThreeLine: true,
+                  subtitle: Text(
+                    _found!.sessions.map((s) => s.name).join(', '),
+                  ),
                   trailing: Semantics(
                     button: true,
-                    label: 'Change host or session',
+                    label: 'Check a different address',
                     child: IconButton(
                       icon: const Icon(Icons.close),
                       onPressed: _clearSelection,
-                      tooltip: 'Change host or session',
+                      tooltip: 'Check a different address',
                     ),
                   ),
                 ),

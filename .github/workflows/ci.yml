@@ -82,8 +82,10 @@ jobs:
       - name: Generate icons
         working-directory: app
         run: |
-          dart run flutter_launcher_icons
+          # The foreground asset must exist before flutter_launcher_icons
+          # consumes it, or the launcher icon lags a run behind the mark.
           dart run tool/generate_notification_icon.dart
+          dart run flutter_launcher_icons
           dart run tool/check_icons.dart
       - run: flutter build apk --profile
         working-directory: app

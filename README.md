@@ -142,10 +142,10 @@ LAN. When several would work it prints them all and you pick.
 
 ### Several sessions at once
 
-Run omp in as many directories as you like. Each session takes its own port,
-starting at 8788 and moving up, and identifies itself distinctly, so a phone
-can hold them all and switch between them. The app finds them by asking each
-port in that range who is there; nothing extra is listening for discovery.
+Run omp in as many directories as you like. They all share one port: the
+first session to bind it serves the rest, and the others attach to it. The
+app asks that one address and sees every session, then switches between them.
+If the session holding the port exits, another takes over within seconds.
 
 On a relay every session appears in one roster and you pick from it.
 
@@ -175,7 +175,7 @@ All optional. The plugin works unconfigured.
 | Variable                    | Default        | Meaning                                        |
 | --------------------------- | -------------- | ---------------------------------------------- |
 | `OMP_REMOTE_LOCAL`          | `1`            | `0` disables the local server                   |
-| `OMP_REMOTE_LOCAL_PORT`     | `8788`         | Local server port                               |
+| `OMP_REMOTE_LOCAL_PORT`     | `8788`         | The port every session on the machine shares    |
 | `OMP_REMOTE_LOCAL_BIND`     | `0.0.0.0`      | Local server bind address                       |
 | `OMP_REMOTE_AGENT_ID`       | `<host>/<dir>` | How this session identifies itself              |
 | `OMP_REMOTE_RELAY_URL`      | unset          | `ws://` or `wss://` relay, enables the uplink   |

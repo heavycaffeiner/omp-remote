@@ -29,7 +29,7 @@ void main() {
     });
   });
 
-  group('DiscoveredSession.fromJson', () {
+  group('DiscoveredWorkstation.fromJson', () {
     test('skips a payload with wrong-typed fields instead of throwing', () {
       final json = {
         'v': '2', // wrong type: string instead of int
@@ -37,16 +37,48 @@ void main() {
         'url': 'ws://100.64.0.3:8788',
         'name': 'omp-remote',
         'agent': 12345, // wrong type: int instead of string
-        'cwd': '/home/kim/proj',
       };
       expect(
-        () => DiscoveredSession.fromJson(json, host: '100.64.0.3', port: 8788),
+        () => DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788),
         returnsNormally,
       );
       expect(
-        DiscoveredSession.fromJson(json, host: '100.64.0.3', port: 8788),
+        DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788),
         isNull,
       );
+    });
+
+    test('reads every session the host serves', () {
+      final json = {
+        'v': 2,
+        't': 'direct',
+        'url': 'ws://100.64.0.3:8788',
+        'name': 'omp-remote',
+        'agent': 'laptop/proj#ab12',
+        'agents': [
+          {'agentId': 'laptop/proj#ab12', 'name': 'proj'},
+          {'agentId': 'laptop/tmp#cd34', 'name': 'tmp'},
+          {'agentId': 42}, // malformed entry is skipped, not fatal
+        ],
+      };
+      final found = DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788);
+      expect(found, isNotNull);
+      expect(found!.sessions.map((s) => s.agentId), [
+        'laptop/proj#ab12',
+        'laptop/tmp#cd34',
+      ]);
+    });
+
+    test('falls back to the single agent when no roster is present', () {
+      final json = {
+        'v': 2,
+        't': 'direct',
+        'url': 'ws://100.64.0.3:8788',
+        'name': 'omp-remote',
+        'agent': 'laptop/proj#ab12',
+      };
+      final found = DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788);
+      expect(found?.sessions.single.agentId, 'laptop/proj#ab12');
     });
   });
 
