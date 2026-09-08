@@ -9,7 +9,7 @@ import { SessionBridge } from "./session-bridge.js";
 import { RelayClient } from "./relay-client.js";
 import { LocalServer } from "./local-server.js";
 import { registerAskShadow } from "./ask-shadow.js";
-import { registerRemoteOmpCommand } from "./pairing.js";
+import { registerRemoteCommand } from "./pairing.js";
 import { safeStringifyInput, truncateText, TOOL_INPUT_MAX_BYTES } from "./normalize.js";
 
 const APPROVAL_TIMEOUT_MS = 120000;
@@ -151,9 +151,9 @@ export default function ompRemote(pi: ExtensionAPI): void {
 		}
 	});
 
-	// `/remote-omp config` hands back the settings it wants persisted. Saving
-	// and re-deriving the config here keeps the file the single source of
-	// truth, and the relay is rebuilt so the change takes effect at once.
+	// `/remote config` hands back the settings it wants persisted. Saving and
+	// re-deriving the config here keeps the file the single source of truth,
+	// and the relay is rebuilt so the change takes effect at once.
 	const updateSettings = (next: StoredSettings): void => {
 		saveSettings(next);
 		settings = next;
@@ -161,46 +161,46 @@ export default function ompRemote(pi: ExtensionAPI): void {
 		applyRelay();
 	};
 
-	registerRemoteOmpCommand(pi, bridge, {
+	// The status text lives here because only the extension factory holds the
+	// transports; `/remote status` renders it.
+	const describeStatus = (): string => {
+		const lines: string[] = [`agent: ${bridge.agentId}`];
+
+		if (config.relay) {
+			const relayHost = new URL(config.relay.url).host;
+			lines.push(`relay: ${relayHost} (${relayClient?.connected ? "connected" : "disconnected"})`);
+		} else {
+			lines.push("relay: not configured, direct only (/remote config relay <url> <token>)");
+		}
+
+		if (!config.local) {
+			lines.push("local: not configured");
+		} else if (localStarted && localServer) {
+			const counts = localServer.clientCounts;
+			const others = localServer.agentCount - 1;
+			const hosting = others > 0 ? `, hosting ${others} other session${others === 1 ? "" : "s"}` : "";
+			lines.push(`local: hosting port ${localServer.port} (control ${counts.control}, viewer ${counts.viewer}${hosting})`);
+		} else if (guestClient) {
+			const state = guestClient.connected ? "connected" : "connecting";
+			lines.push(`local: joined the session hosting port ${config.local.port} (${state})`);
+		} else {
+			lines.push("local: not running");
+		}
+
+		const attached = bridge.getCurrentState().viewers;
+		lines.push(`attached: control ${attached.control}, viewer ${attached.viewer}`);
+		lines.push(`events sent: ${bridge.eventCount}`);
+		lines.push(`last error: ${bridge.lastErrorMessage ?? "none"}`);
+		return lines.join("\n");
+	};
+
+	registerRemoteCommand(pi, bridge, {
 		getConfig: () => config,
 		getSettings: () => settings,
 		updateSettings,
 		getLocalServer: () => (localStarted ? localServer : undefined),
 		relayConnected: () => relayClient?.connected ?? false,
-	});
-
-	pi.registerCommand("remote", {
-		description: "Show omp-remote transport status",
-		handler: async (_args, ctx) => {
-			const lines: string[] = [`agent: ${bridge.agentId}`];
-
-			if (config.relay) {
-				const relayHost = new URL(config.relay.url).host;
-				lines.push(`relay: ${relayHost} (${relayClient?.connected ? "connected" : "disconnected"})`);
-			} else {
-				lines.push("relay: not configured, direct only (/remote-omp config relay <url> <token>)");
-			}
-
-			if (!config.local) {
-				lines.push("local: not configured");
-			} else if (localStarted && localServer) {
-				const counts = localServer.clientCounts;
-				const others = localServer.agentCount - 1;
-				const hosting = others > 0 ? `, hosting ${others} other session${others === 1 ? "" : "s"}` : "";
-				lines.push(`local: hosting port ${localServer.port} (control ${counts.control}, viewer ${counts.viewer}${hosting})`);
-			} else if (guestClient) {
-				const state = guestClient.connected ? "connected" : "connecting";
-				lines.push(`local: joined the session hosting port ${config.local.port} (${state})`);
-			} else {
-				lines.push("local: not running");
-			}
-
-			const attached = bridge.getCurrentState().viewers;
-			lines.push(`attached: control ${attached.control}, viewer ${attached.viewer}`);
-			lines.push(`events sent: ${bridge.eventCount}`);
-			lines.push(`last error: ${bridge.lastErrorMessage ?? "none"}`);
-			ctx.ui.notify(lines.join("\n"), "info");
-		},
+		describeStatus,
 	});
 
 	if (config.remoteApproval) {

@@ -25,6 +25,7 @@ import type { OutboundSink, SessionBridge } from "./session-bridge.js";
 import type { RemoteConfig } from "./config.js";
 import { executeCommand, type CommandResult } from "./commands.js";
 import { AgentRegistry, type AgentChannel, type AgentEntry } from "./agent-registry.js";
+import { directPairingTargets } from "./pairing.js";
 
 export interface LocalServerTokens {
 	control: string;
@@ -148,6 +149,7 @@ export class LocalServer {
 			close: () => {},
 		};
 		const entry = this.registry.register(this.bridge.info, channel);
+		this.registry.onReaped = () => this.broadcastRoster();
 
 		// Everything the local session emits flows into the registry the same
 		// way a guest's frames do.
@@ -268,22 +270,24 @@ export class LocalServer {
 			this.teardownConnection(ws);
 			ws.close(1001, "server stopping");
 		}
+		this.registry.dispose();
 		this.server?.stop(true);
 		this.server = undefined;
 	}
 
 	// The bind address is usually the wildcard 0.0.0.0, which is not a dialable
-	// address for a phone. Prefer the first non-internal IPv4 interface in that
-	// case; an explicit non-wildcard bind is used as-is.
-	private pairingHost(): string {
+	// address for a phone. Ranked candidates are used in that case, the same
+	// order the pairing link prints, so the advertised address is not whatever
+	// interface the OS happened to enumerate first: a virtual bridge sorts
+	// ahead of the LAN often enough to strand a client on a silent timeout.
+	// An explicit non-wildcard bind is used as-is.
+	private pairingHosts(): string[] {
 		const bind = this.config.local?.bind ?? "0.0.0.0";
-		if (bind !== "0.0.0.0") return bind;
-		for (const addresses of Object.values(os.networkInterfaces())) {
-			for (const addr of addresses ?? []) {
-				if (addr.family === "IPv4" && !addr.internal) return addr.address;
-			}
-		}
-		return "127.0.0.1";
+		if (bind !== "0.0.0.0") return [bind];
+		const ranked = directPairingTargets(this.port).map(
+			(target) => new URL(target.url.replace(/^ws:/, "http:")).hostname,
+		);
+		return ranked.length > 0 ? ranked : ["127.0.0.1"];
 	}
 
 	private handleFetch(req: Request, server: Server<ConnectionState>): Response | undefined {
@@ -314,7 +318,7 @@ export class LocalServer {
 				token: this.tokens.agent,
 				code: issued.code,
 				expiresAt: issued.expiresAt,
-				url: `ws://${this.pairingHost()}:${this.port}`,
+				url: `ws://${this.pairingHosts()[0]}:${this.port}`,
 				role,
 				// The client token for that role, so a guest can print a QR that
 				// works the same as the host's rather than one that cannot
@@ -328,10 +332,14 @@ export class LocalServer {
 		// secret; with one it returns the token that code stands for.
 		if (url.pathname === "/pair") {
 			if (!this.config.local) return new Response("not found", { status: 404 });
+			const hosts = this.pairingHosts();
 			const base = {
 				v: PROTOCOL_VERSION,
 				t: "direct" as const,
-				url: `ws://${this.pairingHost()}:${this.port}`,
+				url: `ws://${hosts[0]}:${this.port}`,
+				// Every other interface, so a client that cannot reach the first
+				// one has somewhere to fall back to instead of timing out.
+				alt: hosts.slice(1).map((host) => `ws://${host}:${this.port}`),
 				name: this.config.agentName,
 				agent: this.bridge.agentId,
 				agents: this.registry.list().map((a) => ({ agentId: a.agentId, name: a.name })),

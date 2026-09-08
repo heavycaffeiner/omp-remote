@@ -12,10 +12,9 @@ import '../theme.dart';
 import '../widgets/interactive_request_card.dart';
 import '../widgets/state_header.dart';
 import '../widgets/subagent_panel.dart';
-import '../widgets/queue_panel.dart';
 import '../widgets/todo_panel.dart';
 import '../widgets/transcript_view.dart';
-import 'command_palette_screen.dart';
+import 'command_sheet.dart';
 import 'session_menu_sheet.dart';
 import 'session_switch_sheet.dart';
 
@@ -62,6 +61,14 @@ class _SessionScreenState extends State<SessionScreen>
       _updateNotificationForeground();
     });
     _sessionStore.addListener(_onStoreChanged);
+    // The client falls back across every address the link carried; the one
+    // that answered is where the next connect should start.
+    final savedId = widget.savedProfileId;
+    if (savedId != null) {
+      widget.relayClient.onAddressChanged = (origin) => unawaited(
+        widget.profileStore.recordWorkingAddress(savedId, origin.toString()),
+      );
+    }
     widget.relayClient.connect();
     // Ask for the notification permission once the user has actually
     // connected, not at cold start; fire-and-forget, the result only
@@ -199,42 +206,16 @@ class _SessionScreenState extends State<SessionScreen>
     );
   }
 
-  Future<void> _openCommandReference() async {
-    final remote = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (_) => CommandReferenceScreen(relayClient: widget.relayClient),
+  void _openCommands() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => CommandSheet(
+        relayClient: widget.relayClient,
+        sessionStore: _sessionStore,
+        canControl: _canControl,
       ),
     );
-    if (remote == null || !mounted) return;
-    await _runRemoteEquivalent(remote);
-  }
-
-  /// Opens the app's own surface for a picker command, or runs the command
-  /// outright when it takes no choice.
-  Future<void> _runRemoteEquivalent(String remote) async {
-    switch (remote) {
-      case 'set_model':
-      case 'set_todos':
-      case 'set_active_tools':
-      case 'compact':
-      case 'set_session_name':
-        _openMenu();
-      case 'list_sessions':
-        _openSwitcher();
-      case 'jobs':
-      case 'state':
-      case 'history':
-      case 'commands':
-        // Already on screen: the state header, subagent panel, and
-        // transcript carry what these dashboards show.
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That view is already on this screen.')),
-        );
-      default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No app equivalent for $remote.')),
-        );
-    }
   }
 
   void _openSwitcher() async {
@@ -271,29 +252,6 @@ class _SessionScreenState extends State<SessionScreen>
     );
   }
 
-  Future<void> _runQueueCommand(
-    CommandName cmd,
-    Map<String, Object?> args,
-  ) async {
-    try {
-      await widget.relayClient.sendCommand(cmd, args: args);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Queue change refused: $e')));
-    }
-  }
-
-  void _editQueued(String id, String text) {
-    unawaited(
-      _runQueueCommand(CommandName.queueEdit, {'id': id, 'text': text}),
-    );
-  }
-
-  void _removeQueued(String id) {
-    unawaited(_runQueueCommand(CommandName.queueRemove, {'id': id}));
-  }
-
   @override
   Widget build(BuildContext context) {
     final streaming = _sessionStore.state?.streaming ?? false;
@@ -306,11 +264,11 @@ class _SessionScreenState extends State<SessionScreen>
           if (_canControl)
             Semantics(
               button: true,
-              label: 'View slash command reference',
+              label: 'Open commands',
               child: IconButton(
                 icon: const Icon(Icons.terminal),
-                onPressed: _openCommandReference,
-                tooltip: 'Slash command reference',
+                onPressed: _openCommands,
+                tooltip: 'Commands',
               ),
             ),
           Semantics(
@@ -340,6 +298,7 @@ class _SessionScreenState extends State<SessionScreen>
               status: _status,
               state: _sessionStore.state,
               activeSessionLabel: _activeSessionLabel,
+              onRetry: () => unawaited(widget.relayClient.retryNow()),
             ),
             if (pending.isNotEmpty && _canControl)
               InteractiveRequestCard(
@@ -351,11 +310,6 @@ class _SessionScreenState extends State<SessionScreen>
               SubagentPanel(subagents: _sessionStore.subagents),
             TodoPanel(todos: _sessionStore.todos),
             Expanded(child: TranscriptView(sessionStore: _sessionStore)),
-            QueuePanel(
-              queue: _sessionStore.state?.queue ?? const [],
-              onEdit: _editQueued,
-              onRemove: _removeQueued,
-            ),
             _buildComposer(context, streaming),
           ],
         ),

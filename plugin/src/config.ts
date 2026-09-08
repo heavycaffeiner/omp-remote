@@ -26,7 +26,7 @@ export interface LocalServerConfig {
 export interface RemoteConfig {
 	agentId: string;
 	agentName: string;
-	/// Absent unless a relay was configured with `/remote-omp config relay`.
+	/// Absent unless a relay was configured with `/remote config relay`.
 	/// Direct serving is the default and needs no configuration at all.
 	relay: RelayConfig | undefined;
 	local: LocalServerConfig | undefined;

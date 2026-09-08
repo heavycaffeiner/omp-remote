@@ -24,10 +24,18 @@ class PairingCodeSuccess extends PairingCodeOutcome {
     required this.role,
     required this.agent,
     required this.name,
+    this.alternates = const [],
     this.cwd,
   });
 
+  /// The address this phone reached the server on, which is the one address
+  /// known to work from here.
   final Uri url;
+
+  /// Other addresses the workstation reports for itself, tried only if the
+  /// proven one stops answering.
+  final List<Uri> alternates;
+
   final String token;
   final ClientRole role;
   final String agent;
@@ -138,23 +146,39 @@ Future<PairingCodeOutcome> redeemPairingCode({
     final role = clientRoleFromJson(map['role']);
     final agent = asString(map['agent']);
     final name = asString(map['name']);
-    final url = urlRaw == null ? null : Uri.tryParse(urlRaw);
     // No cwd: the host serves anyone who can reach the port, so it does not
     // publish filesystem paths. The agent id carries the project name.
-    if (url == null ||
-        (url.scheme != 'ws' && url.scheme != 'wss') ||
-        token == null ||
-        role == null ||
-        agent == null ||
-        name == null) {
+    if (token == null || role == null || agent == null || name == null) {
       return PairingCodeNetworkError(
         host: host,
         port: port,
         reason: 'the server response was missing an expected field',
       );
     }
+
+    // This request just reached the server at `host:port`, which makes that
+    // the one address known to work from this phone. The server's own `url`
+    // is a guess about which of its interfaces is reachable, and preferring
+    // it over the proven address is how a redeemed code ended up dialling a
+    // virtual bridge and timing out.
+    final reached = Uri(scheme: 'ws', host: host, port: port);
+    final advertised = urlRaw == null ? null : Uri.tryParse(urlRaw);
+    final alternates = <Uri>[
+      if (advertised != null &&
+          advertised != reached &&
+          (advertised.scheme == 'ws' || advertised.scheme == 'wss'))
+        advertised,
+      for (final raw in asList(map['alt']))
+        if (asString(raw) case final address?)
+          if (Uri.tryParse(address) case final parsed?)
+            if (parsed != reached &&
+                (parsed.scheme == 'ws' || parsed.scheme == 'wss'))
+              parsed,
+    ];
+
     return PairingCodeSuccess(
-      url: url,
+      url: reached,
+      alternates: alternates,
       token: token,
       role: role,
       agent: agent,

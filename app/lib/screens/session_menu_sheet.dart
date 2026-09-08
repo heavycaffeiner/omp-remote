@@ -7,6 +7,7 @@ import '../protocol.dart';
 import '../relay_client.dart';
 import '../session_store.dart';
 import '../theme.dart';
+import 'model_screen.dart';
 
 /// Frequently used session settings, reachable directly rather than through
 /// the slash command reference: model picker, thinking level, compaction,
@@ -60,7 +61,9 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
 
     return SafeArea(
       top: false,
-      child: Padding(
+      // The sheet must scroll: a session with a long todo list otherwise
+      // renders past the bottom of the screen and the rest is unreachable.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -110,46 +113,31 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
             const Divider(),
             const SizedBox(height: AppSpacing.sm),
             Semantics(
-              label:
-                  'Thinking level, currently ${state?.thinkingLevel ?? 'unknown'}',
-              child: DropdownButtonFormField<String>(
-                initialValue:
-                    state?.thinkingLevel != null &&
-                        thinkingLevels.contains(state!.thinkingLevel)
-                    ? state.thinkingLevel
-                    : null,
-                decoration: const InputDecoration(labelText: 'Thinking level'),
-                items: [
-                  for (final level in thinkingLevels)
-                    DropdownMenuItem(value: level, child: Text(level)),
-                ],
-                onChanged: disabled
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        _run(
-                          () => widget.relayClient.sendCommand(
-                            CommandName.setThinking,
-                            args: {'level': value},
-                          ),
-                        );
-                      },
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Semantics(
               button: true,
-              label: 'Cycle model',
-              child: OutlinedButton.icon(
-                onPressed: disabled
-                    ? null
-                    : () => _run(
-                        () => widget.relayClient.sendCommand(
-                          CommandName.cycleModel,
-                        ),
+              label:
+                  'Choose the model, currently ${state?.model?.label ?? 'unknown'}',
+              child: ListTile(
+                leading: const Icon(Icons.memory, size: 20),
+                title: const Text('Model'),
+                subtitle: Text(
+                  state?.model?.label ?? 'unknown',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                contentPadding: EdgeInsets.zero,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ModelScreen(
+                        relayClient: widget.relayClient,
+                        canControl: widget.canControl,
+                        state: state,
                       ),
-                icon: const Icon(Icons.swap_horiz),
-                label: const Text('Cycle model'),
+                    ),
+                  );
+                },
               ),
             ),
             const SizedBox(height: AppSpacing.sm),

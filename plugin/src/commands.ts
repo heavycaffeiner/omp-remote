@@ -7,8 +7,8 @@
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
+import { BTW_TASK, OMFG_TASK, runSideTask, type SideTask } from "./btw.js";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
 
@@ -121,7 +121,11 @@ async function dispatch(
 		case "tools":
 			return cmdTools(pi);
 		case "commands":
-			return cmdCommands(pi);
+			return cmdCommands();
+		case "btw":
+			return cmdSideTask(bridge, BTW_TASK, args);
+		case "omfg":
+			return cmdSideTask(bridge, OMFG_TASK, args);
 		case "models":
 			return cmdModels(bridge);
 		case "system_prompt":
@@ -156,12 +160,15 @@ async function dispatch(
 		case "abort_bash":
 			return cmdAbortBash(bridge, args);
 
+		// omp owns the pending queue now, and its editable surface belongs to
+		// the workstation's own composer: `ExtensionContext` exposes only
+		// `hasPendingMessages()`, with no way to list, edit, or drop an entry.
 		case "queue_edit":
-			return cmdQueueEdit(bridge, args);
 		case "queue_remove":
-			return cmdQueueRemove(bridge, args);
 		case "queue_clear":
-			return ok({ removed: bridge.clearQueue() });
+			return fail(
+				"the pending queue belongs to omp; ExtensionContext exposes only hasPendingMessages(), so a queued message cannot be listed, edited, or removed from here",
+			);
 
 		// Verified gaps: AgentSession-only surface not reachable from an
 		// extension (see docs/protocol.md's Known API gaps), or no invocation
@@ -236,17 +243,36 @@ function cmdPrompt(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): Comm
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 	const ctx = ctxResult;
 
-	// A plain prompt sent mid-turn is held by the plugin rather than handed
-	// to the agent, which offers no queue to read back or edit. The explicit
-	// delivery modes are interruptions by definition, so they go straight
-	// through.
-	if (deliverAs === undefined && !ctx.isIdle()) {
-		const entry = bridge.enqueuePrompt(text);
-		return ok({ accepted: true, queuedId: entry.id });
-	}
-
-	pi.sendUserMessage(text, deliverAs !== undefined ? { deliverAs } : undefined);
+	// A plain prompt sent mid-turn goes into omp's own pending queue, the same
+	// one a message typed at the workstation lands in, delivered `aside` so it
+	// arrives at the next step boundary instead of waiting for the whole turn
+	// to finish. One queue, whoever it came from.
+	const effective =
+		deliverAs ?? (ctx.isIdle() ? undefined : ("aside" as const));
+	pi.sendUserMessage(text, effective !== undefined ? { deliverAs: effective } : undefined);
 	return ok({ accepted: true });
+}
+
+/// Runs one of the two side tasks in its own session.
+///
+/// The main session keeps going: neither the question nor the complaint
+/// enters its transcript or takes a turn from it. The outcome arrives on the
+/// subagent channel, which is what a client shows.
+function cmdSideTask(
+	bridge: SessionBridge,
+	task: SideTask,
+	args: unknown,
+): CommandResult {
+	const record = asRecord(args);
+	if (!record) return fail('"args" must be an object with a "text" field');
+	const text = requireString(record, "text");
+	if (isErrorResult(text)) return fail(text.error);
+	const ctxResult = requireCtx(bridge);
+	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
+	// Not awaited: the outcome arrives as events, and a client should not
+	// hold a command open for however long a model call takes.
+	void runSideTask(bridge, ctxResult, task, text);
+	return ok({ accepted: true, run: task.name });
 }
 
 function cmdSteer(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): CommandResult {
@@ -280,26 +306,6 @@ function cmdAbort(bridge: SessionBridge): CommandResult {
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 	ctxResult.abort();
 	return ok({ aborted: true });
-}
-
-function cmdQueueEdit(bridge: SessionBridge, args: unknown): CommandResult {
-	const record = asRecord(args);
-	if (!record) return fail('"args" must be an object with "id" and "text" fields');
-	const id = requireString(record, "id");
-	if (isErrorResult(id)) return fail(id.error);
-	const text = requireString(record, "text");
-	if (isErrorResult(text)) return fail(text.error);
-	if (!bridge.editQueued(id, text)) return fail(`no queued message with id ${id}`);
-	return ok({ id, text });
-}
-
-function cmdQueueRemove(bridge: SessionBridge, args: unknown): CommandResult {
-	const record = asRecord(args);
-	if (!record) return fail('"args" must be an object with an "id" field');
-	const id = requireString(record, "id");
-	if (isErrorResult(id)) return fail(id.error);
-	if (!bridge.removeQueued(id)) return fail(`no queued message with id ${id}`);
-	return ok({ id });
 }
 
 // -----------------------------------------------------------------------
@@ -400,67 +406,39 @@ function cmdJobs(bridge: SessionBridge): CommandResult {
 	});
 }
 
-// A builtin slash command that opens a picker on the workstation, mapped to
-// the wire command that does the same work here. The app renders its own
-// picker for these; everything absent from this table is workstation-only,
-// because the APIs those commands need (`AgentSession`, `Settings`,
-// `ExtensionCommandContext`) are not reachable from an extension.
-const REMOTE_EQUIVALENT: Record<string, string> = {
-	agents: "jobs",
-	commands: "commands",
-	compact: "compact",
-	context: "state",
-	dump: "history",
-	hub: "jobs",
-	jobs: "jobs",
-	model: "set_model",
-	models: "set_model",
-	rename: "set_session_name",
-	resume: "list_sessions",
-	session: "list_sessions",
-	sessions: "list_sessions",
-	switch: "set_model",
-	todo: "set_todos",
-	tools: "set_active_tools",
-	usage: "state",
-};
+/// The only slash commands the app offers, and the wire command each one
+/// runs here.
+///
+/// The rest are workstation-only: the APIs they need (`AgentSession`,
+/// `Settings`, `ExtensionCommandContext`) are not reachable from an
+/// extension, and listing 84 commands a phone cannot run made the list a
+/// catalogue of disappointments. Model selection is its own setting rather
+/// than a command, since picking a model is a preference, not an action.
+const APP_COMMANDS: Array<{ name: string; description: string; remote: string }> = [
+	{
+		name: "todo",
+		description: "Read and edit the agent's todo list",
+		remote: "set_todos",
+	},
+	{
+		name: "compact",
+		description: "Compact the conversation, optionally around a focus",
+		remote: "compact",
+	},
+	{
+		name: "btw",
+		description: "Ask a side question against the current context",
+		remote: "btw",
+	},
+	{
+		name: "omfg",
+		description: "Turn a complaint into a standing rule",
+		remote: "omfg",
+	},
+];
 
-// `pi.getCommands()` deliberately omits builtins: it exists so an extension
-// can discover the dynamic commands it did not register, and each frontend
-// prepends its own builtin list. The app is such a frontend, so it needs
-// both or its palette shows only extension, prompt, and skill commands.
-function cmdCommands(pi: ExtensionAPI): CommandResult {
-	const seen = new Set<string>();
-	const commands: Array<{
-		name: string;
-		description?: string;
-		source: string;
-		remote?: string;
-	}> = [];
-
-	for (const builtin of BUILTIN_SLASH_COMMAND_DEFS) {
-		if (seen.has(builtin.name)) continue;
-		seen.add(builtin.name);
-		const remote = REMOTE_EQUIVALENT[builtin.name];
-		commands.push({
-			name: builtin.name,
-			description: builtin.description,
-			source: "builtin",
-			...(remote !== undefined ? { remote } : {}),
-		});
-	}
-	for (const dynamic of pi.getCommands()) {
-		if (seen.has(dynamic.name)) continue;
-		seen.add(dynamic.name);
-		commands.push({
-			name: dynamic.name,
-			...(dynamic.description !== undefined ? { description: dynamic.description } : {}),
-			source: dynamic.source,
-		});
-	}
-
-	commands.sort((a, b) => a.name.localeCompare(b.name));
-	return ok({ commands });
+function cmdCommands(): CommandResult {
+	return ok({ commands: APP_COMMANDS.map((entry) => ({ ...entry, source: "builtin" })) });
 }
 
 function cmdModels(bridge: SessionBridge): CommandResult {
@@ -678,7 +656,7 @@ const BASH_OUTPUT_COALESCE_MS = 100;
 function cmdBash(bridge: SessionBridge, config: RemoteConfig, args: unknown): CommandResult {
 	if (!config.allowBash) {
 		return fail(
-			"bash is disabled on this workstation. Run /remote-omp config bash on there to allow it",
+			"bash is disabled on this workstation. Run /remote config bash on there to allow it",
 		);
 	}
 	const record = asRecord(args);

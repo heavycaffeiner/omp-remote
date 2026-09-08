@@ -115,6 +115,9 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           label: outcome.name,
           url: outcome.url.toString(),
+          alternates: [
+            for (final address in outcome.alternates) address.toString(),
+          ],
           token: outcome.token,
           role: outcome.role,
           cwd: outcome.cwd,
@@ -125,7 +128,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
           isDirect: true,
           lastUsedAt: DateTime.now().millisecondsSinceEpoch,
         );
-        await widget.profileStore.upsert(saved);
+        final stored = await widget.profileStore.upsertForAgent(saved);
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute<void>(
@@ -133,6 +136,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
               relayClient: RelayClient(
                 profile: ConnectionProfile(
                   url: outcome.url,
+                  alternates: outcome.alternates,
                   token: outcome.token,
                   role: outcome.role,
                   agentId: outcome.agent,
@@ -140,7 +144,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                 ),
               ),
               profileStore: widget.profileStore,
-              savedProfileId: saved.id,
+              savedProfileId: stored.id,
             ),
           ),
         );
@@ -165,7 +169,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
           children: [
             Text(
               'Type the address and the six-character code shown by '
-              '/remote-omp on your workstation. The code decides which '
+              '/remote on your workstation. The code decides which '
               'session you connect to.',
               style: theme.textTheme.bodyMedium,
             ),

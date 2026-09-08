@@ -63,10 +63,18 @@ class _SessionSwitchSheetState extends State<SessionSwitchSheet> {
     final theme = Theme.of(context);
     final agents = widget.status.agents;
     final showRoster = agents.length > 1;
+    // A session already in this connection's roster is switchable in place,
+    // so listing its saved entry as well shows the same session twice.
+    final rosterIds = agents.map((a) => a.agentId).toSet();
+    final otherProfiles = _otherProfiles
+        .where((p) => !(showRoster && rosterIds.contains(p.agentId)))
+        .toList();
 
     return SafeArea(
       top: false,
-      child: Padding(
+      // The sheet must scroll: a long roster otherwise runs past the bottom
+      // of a phone screen with no way to reach the rest.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -93,7 +101,7 @@ class _SessionSwitchSheetState extends State<SessionSwitchSheet> {
             ],
             Text('Other saved connections', style: theme.textTheme.labelSmall),
             const SizedBox(height: AppSpacing.xs),
-            if (_otherProfiles.isEmpty)
+            if (otherProfiles.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 child: Text(
@@ -104,7 +112,7 @@ class _SessionSwitchSheetState extends State<SessionSwitchSheet> {
                 ),
               )
             else
-              for (final profile in _otherProfiles)
+              for (final profile in otherProfiles)
                 _ProfileSwitchTile(
                   profile: profile,
                   onTap: () => _switchProfile(profile),

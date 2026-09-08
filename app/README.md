@@ -4,8 +4,8 @@ Flutter client for the omp-remote wire protocol (see `../docs/protocol.md`).
 Connects to an omp session either through the relay or directly to the
 plugin's local WebSocket server, and lets you read the transcript, send
 prompts, answer interactive requests, and change session settings from a
-phone. Slash commands are listed for reference but run at the workstation:
-the extension API has no way to invoke one remotely.
+phone. Four slash commands are offered, the four a phone can actually drive;
+the rest need APIs an extension cannot reach.
 
 Screenshots of every screen described below are in
 [`../docs/screenshots/`](../docs/screenshots/) and on the root
@@ -70,7 +70,7 @@ Runner > Signing & Capabilities.
 
 ## What to enter on the connection screen
 
-The easiest path is pairing: run `/remote-omp` in an omp session on the
+The easiest path is pairing: run `/remote` in an omp session on the
 workstation, which prints a QR code and a `remote-omp://pair?...` link.
 Scanning the code (or tapping the link on the same device) fills in the URL,
 the token, the role, and which session to open, and you confirm and save
@@ -84,7 +84,7 @@ and the UI defers to that.
 
 When neither is possible, "Enter a code" takes the workstation address and
 the six-character code printed alongside the QR. The address is whatever
-`/remote-omp` printed, `host` or `host:port`; the port defaults to 8788 when
+`/remote` printed, `host` or `host:port`; the port defaults to 8788 when
 omitted.
 
 Multiple connections can be saved and switched between from the connection
@@ -101,10 +101,12 @@ unlocked device can reach it.
 
 ## What the session screen shows
 
-The transcript is a log, not a chat: one left edge with a gutter naming who
-produced each line. A tool call is one card carrying its own result, so a
-result never repeats below it, and a call that changed a file shows that
-file's diff inline with line numbers and per-line markers.
+The transcript is a log, not a chat: one left edge, a tiny label naming who
+produced each run of lines, and no gutter spending width on every row. A tool
+call is one card carrying its own result, so a result never repeats below it,
+and a call that changed a file shows that file's diff inline with line
+numbers and per-line markers. The view follows new output while you are at
+the bottom and stops the moment you scroll away.
 
 Message text, thinking, notices, and interactive request bodies are rendered
 as markdown. Blocks the harness wraps in a tag (`<system-reminder>`,
@@ -115,5 +117,11 @@ Above the transcript: the agent's todo list while it has one, updated as the
 list changes rather than at turn boundaries, and one row per spawned subagent
 with its status, current tool, and token count.
 
-Below it: messages waiting for the agent to finish. A prompt sent mid-turn is
-held rather than delivered, so it can be rewritten or dropped before it runs.
+A prompt sent mid-turn goes into omp's own pending queue and arrives at the
+next step boundary. The send button carries the count; editing a pending
+message is done at the workstation, since the extension API exposes no way to
+read or change that queue.
+
+Four commands are offered, because those are the four a phone can drive:
+`todo`, `compact`, `btw`, and `omfg`. Model, thinking level, and fast mode
+are settings on their own screen rather than commands.

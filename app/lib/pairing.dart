@@ -13,11 +13,18 @@ class PairingPayload {
     required this.token,
     required this.role,
     required this.agentId,
+    this.alternates = const [],
     this.name,
   });
 
   final PairingTransport transport;
   final Uri url;
+
+  /// Other addresses for the same session, best guess first. The workstation
+  /// cannot know which of its interfaces the phone can reach, so it names
+  /// all of them and the client finds out.
+  final List<Uri> alternates;
+
   final String token;
   final ClientRole role;
 
@@ -93,11 +100,30 @@ class PairingPayload {
       return 'missing agent parameter';
     }
 
+    // Every address the workstation thought might be reachable. Only the
+    // phone can tell which one actually is, so the whole list travels and
+    // the client tries them together. A malformed entry is dropped rather
+    // than failing a link whose primary address is fine.
+    final alternates = <Uri>[];
+    for (final raw in uri.queryParametersAll['alt'] ?? const <String>[]) {
+      if (raw.isEmpty) continue;
+      final Uri parsed;
+      try {
+        parsed = Uri.parse(raw);
+      } on FormatException {
+        continue;
+      }
+      if (parsed.scheme != 'ws' && parsed.scheme != 'wss') continue;
+      if (parsed == url || alternates.contains(parsed)) continue;
+      alternates.add(parsed);
+    }
+
     final name = params['name'];
 
     return PairingPayload(
       transport: transport,
       url: url,
+      alternates: alternates,
       token: token,
       role: role,
       agentId: agentId,

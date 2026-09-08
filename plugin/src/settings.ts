@@ -1,5 +1,5 @@
 // Persisted plugin settings. The relay lives here rather than in the
-// environment so `/remote-omp config` can change it and the change survives a
+// environment so `/remote config` can change it and the change survives a
 // restart. The file is user-editable, so every field is validated on read and
 // a bad value degrades to the default rather than failing the session.
 

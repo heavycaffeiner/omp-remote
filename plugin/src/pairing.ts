@@ -1,4 +1,4 @@
-// Pairing links and the /remote-omp command (docs/protocol.md, "Pairing").
+// Pairing links and the /remote command (docs/protocol.md, "Pairing").
 // The link is a live credential: it is rendered to the UI only, never
 // logged, and never sent into the conversation as a message.
 
@@ -79,21 +79,30 @@ export function directPairingTargets(port: number): PairingTarget[] {
 	return ranked.map((entry) => entry.target);
 }
 
-// Builds remote-omp://pair?v=2&t=...&url=...&token=...&role=...&agent=...&name=...
+// Builds remote-omp://pair?v=2&t=...&url=...&alt=...&token=...&role=...&agent=...&name=...
 // (docs/protocol.md, "Pairing"), matching the Flutter app's parser exactly.
 // `agent` is sent on both transports: a workstation serves every session on
 // one port, so without it a client cannot tell which one the link is for.
+//
+// Every remaining candidate rides along as a repeated `alt`. Ranking picks a
+// best guess, but only the phone knows which of a workstation's interfaces it
+// can actually reach, and a link naming one address strands it on a silent
+// timeout when that guess is wrong.
 export function buildPairingLink(
 	target: PairingTarget,
 	token: string,
 	role: "control" | "viewer",
 	agentId: string,
 	name: string,
+	alternates: readonly PairingTarget[] = [],
 ): string {
 	const params = new URLSearchParams();
 	params.set("v", "2");
 	params.set("t", target.transport);
 	params.set("url", target.url);
+	for (const alternate of alternates) {
+		if (alternate.url !== target.url) params.append("alt", alternate.url);
+	}
 	params.set("token", token);
 	params.set("role", role);
 	params.set("agent", agentId);
@@ -131,7 +140,7 @@ function resolvePairingToken(
 		return { token: role === "control" ? local.tokens.control : local.tokens.viewer };
 	}
 	if (!config.relay) {
-		return { error: "no relay is configured. Run /remote-omp config relay <url> <token>" };
+		return { error: "no relay is configured. Run /remote config relay <url> <token>" };
 	}
 
 	const field = role === "control" ? "control" : "viewer";
@@ -139,7 +148,7 @@ function resolvePairingToken(
 	const token = role === "control" ? config.relay.controlToken : config.relay.viewerToken;
 	if (!token) {
 		return {
-			error: `no ${role} token is configured for relay pairing. Run /remote-omp config relay ${field} <token> with the relay's ${relayVar}, or pair over direct instead. The agent token cannot be used here: it authenticates as an agent, not a client`,
+			error: `no ${role} token is configured for relay pairing. Run /remote config relay ${field} <token> with the relay's ${relayVar}, or pair over direct instead. The agent token cannot be used here: it authenticates as an agent, not a client`,
 		};
 	}
 	return { token };
@@ -178,33 +187,36 @@ async function requestHostedPairing(port: number, role: "control" | "viewer"): P
 	}
 }
 
-/// What `/remote-omp` needs from the extension: the live config, the settings
+/// What `/remote` needs from the extension: the live config, the settings
 /// behind it, a way to persist a change, and the transports' current state.
-export interface RemoteOmpHost {
+export interface RemoteHost {
 	getConfig: () => RemoteConfig;
 	getSettings: () => StoredSettings;
 	updateSettings: (next: StoredSettings) => void;
 	getLocalServer: () => LocalServer | undefined;
 	relayConnected: () => boolean;
+	/// Rendered by `/remote status`; only the extension factory holds the
+	/// transports it reports on.
+	describeStatus: () => string;
 }
 
 const CONFIG_USAGE = [
 	"Usage:",
-	"  /remote-omp config                       show the current settings",
-	"  /remote-omp config relay <url> <token>   route through a relay",
-	"  /remote-omp config relay control <token> client token for control links",
-	"  /remote-omp config relay viewer <token>  client token for viewer links",
-	"  /remote-omp config relay off             go back to direct only",
-	"  /remote-omp config port <number>         port the direct server binds",
-	"  /remote-omp config bind <address>        address the direct server binds",
-	"  /remote-omp config direct on|off         serve directly at all",
-	"  /remote-omp config bash on|off           allow remote shell commands",
-	"  /remote-omp config approval on|off       ask the phone to approve tools",
+	"  /remote config                       show the current settings",
+	"  /remote config relay <url> <token>   route through a relay",
+	"  /remote config relay control <token> client token for control links",
+	"  /remote config relay viewer <token>  client token for viewer links",
+	"  /remote config relay off             go back to direct only",
+	"  /remote config port <number>         port the direct server binds",
+	"  /remote config bind <address>        address the direct server binds",
+	"  /remote config direct on|off         serve directly at all",
+	"  /remote config bash on|off           allow remote shell commands",
+	"  /remote config approval on|off       ask the phone to approve tools",
 ].join("\n");
 
 /// Renders the settings a user can change, plus where they are stored. A
 /// token is never echoed: only whether one is set.
-function describeSettings(host: RemoteOmpHost): string {
+function describeSettings(host: RemoteHost): string {
 	const settings = host.getSettings();
 	const lines = ["omp-remote settings", ""];
 	if (settings.relay) {
@@ -237,7 +249,7 @@ function parseOnOff(word: string | undefined): boolean | undefined {
 /// port or the bind address only takes effect on the next start, since the
 /// listening socket is already bound; the reply says so rather than leaving
 /// the user to wonder.
-function runConfig(words: string[], host: RemoteOmpHost): string {
+function runConfig(words: string[], host: RemoteHost): string {
 	if (words.length === 0) return describeSettings(host);
 
 	const settings = host.getSettings();
@@ -256,7 +268,7 @@ function runConfig(words: string[], host: RemoteOmpHost): string {
 			if (sub === "control" || sub === "viewer") {
 				const token = words[2];
 				if (!next.relay) {
-					return "Configure the relay first: /remote-omp config relay <url> <token>";
+					return "Configure the relay first: /remote config relay <url> <token>";
 				}
 				if (!token) return `Missing token. ${CONFIG_USAGE}`;
 				if (sub === "control") next.relay.controlToken = token;
@@ -284,8 +296,8 @@ function runConfig(words: string[], host: RemoteOmpHost): string {
 				`Relay set to ${url}. Connecting now.`,
 				"",
 				"Relay pairing links also need the relay's own client tokens:",
-				"  /remote-omp config relay control <token>",
-				"  /remote-omp config relay viewer <token>",
+				"  /remote config relay control <token>",
+				"  /remote config relay viewer <token>",
 			].join("\n");
 		}
 		case "port": {
@@ -333,17 +345,36 @@ function runConfig(words: string[], host: RemoteOmpHost): string {
 	}
 }
 
-// Registers the /remote-omp command (docs/protocol.md, "Pairing"):
+/// What to try when the app sits on "Connecting". The listener binds every
+/// interface, so a phone that cannot reach it is almost always being dropped
+/// by the workstation's own firewall, and that is invisible from here: a
+/// connect from this machine to its own address never traverses the input
+/// chain, so the plugin cannot test it for the user.
+function firewallHint(port: number): string {
+	return [
+		`If the app stays on "Connecting", this machine is dropping port ${port}.`,
+		"Open it for your local network, for example:",
+		`    sudo firewall-cmd --add-port=${port}/tcp        # firewalld, this boot only`,
+		`    sudo ufw allow ${port}/tcp                      # ufw`,
+		"Tailscale traffic usually arrives on a trusted interface and needs nothing.",
+	].join("\n");
+}
+
+// Registers the /remote command (docs/protocol.md, "Pairing"):
 //   bare    -> control link, direct preferred when the local server is up, relay fallback
 //   viewer  -> viewer link instead of control
 //   relay   -> force the relay form even when the local server is up
 //   config  -> show or change the persisted settings
-export function registerRemoteOmpCommand(
+//   status  -> transport diagnostics
+//
+// One command, because pairing and the settings behind it are the same
+// subject: two names for one plugin only made the user guess which.
+export function registerRemoteCommand(
 	pi: ExtensionAPI,
 	bridge: SessionBridge,
-	host: RemoteOmpHost,
+	host: RemoteHost,
 ): void {
-	pi.registerCommand("remote-omp", {
+	pi.registerCommand("remote", {
 		description: "Pair the OMPRemote app with this session, or configure it",
 		handler: async (argsText, ctx) => {
 			const words = argsText.trim().split(/\s+/).filter((word) => word.length > 0);
@@ -351,6 +382,11 @@ export function registerRemoteOmpCommand(
 
 			if (first === "config") {
 				ctx.ui.notify(runConfig(words.slice(1), host), "info");
+				return;
+			}
+
+			if (first === "status") {
+				ctx.ui.notify(host.describeStatus(), "info");
 				return;
 			}
 
@@ -384,6 +420,7 @@ export function registerRemoteOmpCommand(
 						role,
 						bridge.agentId,
 						bridge.info.name,
+						reachable,
 					);
 					const lines = [
 						`${roleLabel} pairing for ${bridge.agentId}`,
@@ -406,6 +443,7 @@ export function registerRemoteOmpCommand(
 					}
 					lines.push("", "Or paste this link into the app:", "", link);
 					lines.push("", await renderQr(link));
+					lines.push(firewallHint(port));
 					ctx.ui.notify(lines.join("\n"), "info");
 					return;
 				}
@@ -434,7 +472,14 @@ export function registerRemoteOmpCommand(
 
 			const primary = candidates[0] as PairingTarget;
 			const links = candidates.map((candidate) =>
-				buildPairingLink(candidate, tokenResult.token, role, bridge.agentId, bridge.info.name),
+				buildPairingLink(
+					candidate,
+					tokenResult.token,
+					role,
+					bridge.agentId,
+					bridge.info.name,
+					candidates,
+				),
 			);
 			const primaryLink = links[0] as string;
 			const qr = await renderQr(primaryLink);
@@ -471,6 +516,10 @@ export function registerRemoteOmpCommand(
 					const target = candidates[i] as PairingTarget;
 					lines.push(`  ${target.label}: ${target.url.replace(/^ws:\/\//, "")}`);
 				}
+			}
+
+			if (transport === "direct" && local) {
+				lines.push("", firewallHint(local.port));
 			}
 
 			// UI notification only: never appended to the session transcript and

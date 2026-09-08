@@ -136,13 +136,13 @@ run a separate deployment per trust domain.
 
 ## Pairing
 
-`/remote-omp` in an omp session prints a QR code and a link. Scanning or opening
+`/remote` in an omp session prints a QR code and a link. Scanning or opening
 it configures the app with no typing.
 
 The link is a URI in the app's scheme:
 
 ```
-remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788&token=<token>&role=control&agent=kim-thinkpad%2Fomp-remote&name=omp-remote
+remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788&alt=ws%3A%2F%2F192.168.0.126%3A8788&token=<token>&role=control&agent=kim-thinkpad%2Fomp-remote&name=omp-remote
 ```
 
 | Parameter | Required | Meaning                                             |
@@ -150,20 +150,33 @@ remote-omp://pair?v=2&t=direct&url=ws%3A%2F%2F100.64.0.3%3A8788&token=<token>&ro
 | `v`       | yes      | Protocol version, `2`                                |
 | `t`       | yes      | `direct` or `relay`                                  |
 | `url`     | yes      | WebSocket origin, without the `/client` path         |
+| `alt`     | no       | Another origin for the same session; repeat per address |
 | `token`   | yes      | The token for the requested role                     |
 | `role`    | yes      | `control` or `viewer`                                |
 | `agent`   | yes      | Which session to open; both transports serve several  |
 | `name`    | no       | Display name for the connection                      |
 
+`url` is the workstation's best guess and `alt` carries the rest. Only the
+phone knows which of a workstation's interfaces it can reach: ranking puts a
+Tailscale address ahead of the LAN, which is wrong whenever the phone is not
+on the tailnet, and a link naming one address strands it on a silent timeout.
+A client MUST open every candidate at once and keep the first that answers,
+rather than trying them in turn: each unreachable address otherwise costs a
+full connect timeout.
+
+A pairing code is redeemed over HTTP against an address the phone reached, so
+that address is the one known to work. A client MUST dial the address it
+redeemed against and treat the payload's `url` and `alt` as fallbacks.
+
 The token is in the link, so the link is a credential. It is shown on the
 workstation's own screen and is not logged, and the QR is not written to disk.
-`/remote-omp viewer` emits a viewer link instead of a control link, which is the
+`/remote viewer` emits a viewer link instead of a control link, which is the
 one to hand to someone who should only watch.
 
 ### Pairing codes
 
 Copying a 64-character token by hand is the fallback nobody wants, so the local
-server also issues a short code standing for one. `/remote-omp` prints it
+server also issues a short code standing for one. `/remote` prints it
 alongside the QR.
 
 A code is six characters from `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, Crockford
@@ -362,7 +375,6 @@ fields are omitted, never guessed.
   "streaming": false,
   "compacting": false,
   "queued": 0,
-  "queue": [{ "id": "q1", "text": "held until the agent settles", "createdAt": 1788546521000 }],
   "fastMode": { "enabled": false, "active": false },
   "autoCompaction": true,
   "steeringMode": "one-at-a-time",
@@ -541,20 +553,45 @@ Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 
 ### The prompt queue
 
-A plain `prompt` sent while the agent is streaming is held by the plugin
-rather than handed to the agent, which offers no queue to read back or edit.
-It appears in `state.queue` and is sent, one per idle point, when the agent
-settles. `steer`, `follow_up`, and `aside` are interruptions by definition
-and always go straight through.
+There is one queue and omp owns it. A plain `prompt` sent while the agent is
+streaming is handed straight over as `aside`, which puts it in the same
+pending queue a message typed at the workstation lands in and delivers it at
+the next step boundary, without cutting into the in-flight tool batch.
+`steer`, `follow_up`, and `aside` are interruptions by definition and behave
+as they always did.
 
-| `cmd`          | `args`             | Reply `data`        |
-| -------------- | ------------------ | ------------------- |
-| `queue_edit`   | `{ id, text }`     | `{ id, text }`      |
-| `queue_remove` | `{ id }`           | `{ id }`            |
-| `queue_clear`  | `{}`               | `{ removed }`       |
+`state.queued` reports whether anything is pending. It is presence, not a
+count: `ExtensionContext` exposes only `hasPendingMessages()`, with no way to
+list, edit, or drop an entry, so a client cannot show or change the queue.
+The workstation's own composer is where a pending message is edited.
 
-Editing or removing a message that has already been sent fails: the id is no
-longer in the queue.
+### The four commands a client can run
+
+`commands` returns exactly these, and nothing else is offered:
+
+| `cmd`     | `args`                | What it does                          |
+| --------- | --------------------- | ------------------------------------- |
+| `set_todos` | `{ phases }`        | Read and write the agent's todo list  |
+| `compact` | `{ instructions? }`   | Compact the conversation              |
+| `btw`     | `{ text }`            | Answer a side question in its own session |
+| `omfg`    | `{ text }`            | Turn a complaint into a standing rule |
+
+The workstation has dozens of slash commands; these are the ones a client can
+drive, because the rest need `AgentSession`, `Settings`, or
+`ExtensionCommandContext`, none of which an extension can reach. Listing the
+others only advertised what does not work.
+
+`btw` opens a second session seeded with a digest of this one, answers there
+with read-only tools, and reports through the `subagent` event channel. The
+question never enters the main transcript and never takes a turn from it,
+which is what makes an aside an aside.
+
+`omfg` hands the complaint to the agent with the instruction to write the
+rule. `ExtensionAPI` exposes only the `ttsr_triggered` event, with nothing to
+forge a rule directly.
+
+Model selection is not a command. It is a setting, driven by `models`,
+`set_model`, `set_thinking`, and `set_fast_mode`.
 
 ### Running things
 

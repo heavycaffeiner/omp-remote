@@ -122,7 +122,7 @@ upgrade request and the frames are your session content.
 Start omp with the plugin loaded, then:
 
 ```
-/remote-omp
+/remote
 ```
 
 A QR code appears. Scan it with the app and you are connected.
@@ -139,9 +139,11 @@ expires in five minutes. This beats copying a 64-character token by hand,
 which is what the raw link would otherwise ask of you.
 
 ```
-/remote-omp viewer    a read-only code and link, for someone who should only watch
-/remote-omp relay     force the relay form even when direct is available
-/remote               transport status: what is connected and who is attached
+/remote            a control code, link, and QR for this session
+/remote viewer     a read-only code and link, for someone who should only watch
+/remote relay      force the relay form even when direct is available
+/remote status     transport status: what is connected and who is attached
+/remote config     see and change the settings
 ```
 
 The plugin picks a reachable address for you, preferring Tailscale, then your
@@ -174,7 +176,7 @@ which token authenticated the connection, so a viewer cannot promote itself.
 
 Viewer links only exist for direct pairing out of the box. Over a relay they
 need the relay's own viewer token, set with
-`/remote-omp config relay viewer <token>`.
+`/remote config relay viewer <token>`.
 
 ## Configuration
 
@@ -182,7 +184,7 @@ All optional. Unconfigured, the plugin serves this workstation directly on
 port 8788 and uses no relay, which is what pairing over your LAN or Tailscale
 needs.
 
-Run `/remote-omp config` in a session to see the current settings and how to
+Run `/remote config` in a session to see the current settings and how to
 change each of them. There are no environment variables; everything is stored
 in `~/.omp/agent/omp-remote.json` at mode 0600, because it holds credentials.
 
@@ -196,10 +198,34 @@ in `~/.omp/agent/omp-remote.json` at mode 0600, because it holds credentials.
 | `remoteApproval` | `false`   | Forward tool approvals to the phone           |
 
 ```
-/remote-omp config relay wss://relay.example/agent <agent-token>
-/remote-omp config relay control <relay-control-token>
-/remote-omp config relay off
+/remote config relay wss://relay.example/agent <agent-token>
+/remote config relay control <relay-control-token>
+/remote config relay off
 ```
+
+## When the app will not connect
+
+The status band names the reason and keeps it on screen; the icon next to it
+retries immediately instead of waiting out the backoff.
+
+| What the band says | What it means |
+| ------------------ | ------------- |
+| `host unreachable: connection timed out` | The workstation is dropping the port. Almost always its own firewall: the plugin binds every interface, so the listener itself is fine. |
+| `port refused: nothing is listening on that port` | Right address, wrong port, or that session is not serving. |
+| `token rejected: the server did not accept this token` | The link expired or belongs to a different session. Run `/remote` again. |
+| `host unreachable: could not resolve the address` | The address in the link is not resolvable from the phone's network. |
+
+A timeout on a LAN address is the common one, and the fix is on the
+workstation:
+
+```sh
+sudo firewall-cmd --add-port=8788/tcp        # firewalld, this boot only
+sudo ufw allow 8788/tcp                      # ufw
+```
+
+Tailscale traffic usually arrives on an interface the firewall already
+trusts, so pairing over a Tailscale address often works with no change at
+all. `/remote` prints these same commands under the pairing code.
 
 ## Security
 
@@ -224,20 +250,22 @@ workstation. The app labels these accordingly.
 
 Known, and unlikely to change without upstream API work.
 
-- **Slash commands cannot be run remotely.** The extension API exposes no way
-  to invoke one, and submitting `/name` as a prompt sends it to the model as
-  text instead of running it. `commands` lists every command the session
-  knows, marking which ones the app can do the same work for itself.
-- **Some settings are unreachable.** `set_fast_mode`, `set_steering_mode`,
+- **Four commands, not eighty-four.** The extension API exposes no way to
+  invoke a slash command, and submitting `/name` as a prompt sends it to the
+  model as text. The app offers `todo`, `compact`, `btw`, and `omfg`, each
+  reimplemented through an API that is reachable. Everything else stays at
+  the workstation.
+- **The pending queue cannot be edited from the phone.** There is one queue
+  and omp owns it; `ExtensionContext` reports only whether something is
+  waiting. A mid-turn prompt still arrives at the next step boundary, the
+  same as one typed at the workstation.
+- **Some settings are unreachable.** `set_steering_mode`,
   `set_follow_up_mode`, `set_interrupt_mode`, `cycle_model`, `stats`,
   `new_session`, `switch_session`, and `branch` live on a session object
   extensions never receive. Each fails with an explicit error rather than
   pretending to work.
 - **Prompts from other extensions are not forwarded.** Only this plugin's own
   tools, the shadowed `ask`, and tool denials reach your phone.
-- **Pickers cannot be opened remotely.** A slash command that opens a picker
-  on the workstation has no remote invocation path, so the app renders its
-  own surface for the ones whose work is reachable and says which they are.
 
 ## Development
 

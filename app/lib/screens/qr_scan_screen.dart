@@ -81,7 +81,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
                     child: Semantics(
                       liveRegion: true,
                       child: Text(
-                        'Point the camera at the pairing QR code shown by /remote-omp.',
+                        'Point the camera at the pairing QR code shown by /remote.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onInverseSurface,

@@ -204,6 +204,11 @@ function stringField(value: unknown, key: string): string {
 // sees an empty conversation. Tool calls live inside assistant messages and
 // their results arrive as separate `toolResult` messages, so both are folded
 // back into the tool_start/tool_end pair a live turn would have produced.
+//
+// Every entry type that carries context is emitted. Dropping the ones that
+// are not plain messages left a replayed session missing its compactions,
+// branch summaries, and model changes, so the history read as if those
+// boundaries had never happened.
 export function buildHistoryEvents(entries: readonly unknown[]): RemoteEvent[] {
 	const events: RemoteEvent[] = [];
 	for (const entry of entries) {
@@ -214,6 +219,35 @@ export function buildHistoryEvents(entries: readonly unknown[]): RemoteEvent[] {
 			events.push({ k: "compaction", phase: "end" });
 			if (summary.length > 0) {
 				events.push({ k: "message", role: "system", text: truncateText(summary, TEXT_MAX_BYTES) });
+			}
+			continue;
+		}
+
+		if (type === "branch_summary") {
+			const summary = stringField(entry, "summary");
+			events.push({
+				k: "message",
+				role: "system",
+				text: truncateText(
+					summary.length > 0 ? `Branched from here. ${summary}` : "Branched from here.",
+					TEXT_MAX_BYTES,
+				),
+			});
+			continue;
+		}
+
+		if (type === "model_change") {
+			const model = stringField(entry, "model") || stringField(entry, "modelId");
+			if (model.length > 0) {
+				events.push({ k: "message", role: "system", text: `Model changed to ${model}` });
+			}
+			continue;
+		}
+
+		if (type === "thinking_level_change") {
+			const level = stringField(entry, "thinkingLevel") || stringField(entry, "level");
+			if (level.length > 0) {
+				events.push({ k: "message", role: "system", text: `Thinking level set to ${level}` });
 			}
 			continue;
 		}

@@ -34,7 +34,6 @@ import type {
 	CoreState,
 	InteractiveRequest,
 	PendingRequestSummary,
-	QueuedMessage,
 	RemoteEvent,
 	RequestAnswer,
 	RequestCancelReason,
@@ -62,10 +61,6 @@ function nextRequestId(): string {
 	requestCounter += 1;
 	return `req-${requestCounter}`;
 }
-
-// The retained ring holds 512 events; replaying more only evicts the older
-// half of the same replay, so cap it just under.
-const HISTORY_REPLAY_MAX = 400;
 
 // Validates a RequestAnswer against the shape its request kind requires.
 // Returns the narrowed answer or undefined when the shape does not match.
@@ -102,7 +97,6 @@ export class SessionBridge {
 	/// True once a transcript has been replayed, so a late subscriber does not
 	/// trigger a second pass over the same branch.
 	historyReplayed = false;
-	private readonly queue: QueuedMessage[] = [];
 
 	/// Write-tool arguments held between `tool_execution_start` and its end,
 	/// because the result carries neither the content nor a diff.
@@ -111,7 +105,6 @@ export class SessionBridge {
 	/// Latest todo list, so a client attaching mid-run sees it without
 	/// waiting for the next todo mutation.
 	private lastTodos: TodoSummary[] | undefined;
-	private queueSeq = 0;
 	private readonly connectedAt = Date.now();
 	private readonly bashProcesses = new Map<string, AbortController>();
 	private eventsSent = 0;
@@ -126,10 +119,22 @@ export class SessionBridge {
 		return this.config.agentId;
 	}
 
+	/// The name a client shows for this session. The folder alone collides as
+	/// soon as two sessions run in one project, so the session's own title is
+	/// appended whenever it has one.
+	get displayName(): string {
+		const title = this.latestCtx?.sessionManager.getSessionName();
+		const folder = this.config.agentName;
+		if (typeof title !== "string") return folder;
+		const trimmed = title.trim();
+		if (trimmed.length === 0 || trimmed === folder) return folder;
+		return `${folder} ${trimmed}`;
+	}
+
 	get info(): AgentInfo {
 		return {
 			agentId: this.config.agentId,
-			name: this.config.agentName,
+			name: this.displayName,
 			host: os.hostname(),
 			cwd: this.latestCtx?.cwd ?? process.cwd(),
 			online: true,
@@ -170,7 +175,10 @@ export class SessionBridge {
 		this.sinks.delete(sink);
 	}
 
-	private broadcastEvent(event: RemoteEvent): void {
+	/// Publishes one event to every subscriber. Also used by the side-question
+	/// session, which is not a `pi.on` source but reports through the same
+	/// channel.
+	broadcastEvent(event: RemoteEvent): void {
 		this.seq += 1;
 		this.eventsSent += 1;
 		const frame: CoreEvent = { t: "event", seq: this.seq, event };
@@ -229,7 +237,6 @@ export class SessionBridge {
 		if (thinkingLevel !== undefined) snapshot.thinkingLevel = thinkingLevel;
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;
-		if (this.queue.length > 0) snapshot.queue = this.queue.map((q) => ({ ...q }));
 		if (this.lastTodos !== undefined) snapshot.todos = this.lastTodos;
 		return snapshot;
 	}
@@ -322,64 +329,12 @@ export class SessionBridge {
 		this.broadcastEvent({ k: "bash_output", id, text: truncateText(text, TEXT_MAX_BYTES) });
 	}
 
-	// -------------------------------------------------------------------
-	// Prompt queue
-	// -------------------------------------------------------------------
-
-	// Handing a prompt straight to the agent while it is streaming makes it
-	// invisible and unchangeable: the agent exposes no queue to read or edit.
-	// Holding it here instead keeps it on the wire state until the turn ends.
-	enqueuePrompt(text: string): QueuedMessage {
-		this.queueSeq += 1;
-		const entry: QueuedMessage = {
-			id: `q${this.queueSeq}`,
-			text,
-			createdAt: Date.now(),
-		};
-		this.queue.push(entry);
-		this.emitState();
-		return entry;
-	}
-
-	editQueued(id: string, text: string): boolean {
-		const entry = this.queue.find((q) => q.id === id);
-		if (!entry) return false;
-		entry.text = text;
-		this.emitState();
-		return true;
-	}
-
-	removeQueued(id: string): boolean {
-		const index = this.queue.findIndex((q) => q.id === id);
-		if (index < 0) return false;
-		this.queue.splice(index, 1);
-		this.emitState();
-		return true;
-	}
-
-	clearQueue(): number {
-		const count = this.queue.length;
-		this.queue.length = 0;
-		if (count > 0) this.emitState();
-		return count;
-	}
-
-	get queuedMessages(): readonly QueuedMessage[] {
-		return this.queue;
-	}
-
-	// Sends the head of the queue once the agent is idle. One per idle point:
-	// the next `agent_end` drains the following entry, so each prompt gets its
-	// own turn instead of being concatenated.
-	flushQueue(): void {
-		const ctx = this.latestCtx;
-		if (!ctx || this.queue.length === 0) return;
-		if (!ctx.isIdle()) return;
-		const next = this.queue.shift();
-		if (!next) return;
-		this.emitState();
-		this.pi.sendUserMessage(next.text);
-	}
+	// The prompt queue lives in omp, not here. A prompt sent mid-turn is
+	// handed straight over with `deliverAs: "aside"`, which puts it in the
+	// same pending queue a message typed at the workstation goes into and
+	// delivers it at the next step boundary. Holding a second queue here made
+	// the phone's messages wait for the whole turn and put them somewhere the
+	// workstation could not see.
 
 	// -------------------------------------------------------------------
 	// History replay
@@ -414,12 +369,11 @@ export class SessionBridge {
 		const events = buildHistoryEvents(entries);
 		if (events.length === 0) return;
 		this.historyReplayed = true;
-		// The ring keeps the newest window, so replaying more than it holds
-		// only evicts the oldest of them. Trim up front to keep the seq range
-		// tight and skip work that would be dropped anyway.
-		const start = Math.max(0, events.length - HISTORY_REPLAY_MAX);
-		for (let i = start; i < events.length; i++) {
-			this.broadcastEvent(events[i] as RemoteEvent);
+		// The whole branch, not a window of it: the retained buffer is bounded
+		// by bytes and sized to hold a full session, and trimming here is what
+		// left a resumed conversation starting mid-sentence.
+		for (const event of events) {
+			this.broadcastEvent(event as RemoteEvent);
 		}
 	}
 
@@ -464,9 +418,6 @@ export class SessionBridge {
 			this.updateCtx(ctx);
 			this.broadcastEvent({ k: "agent_end", terminal: !event.willContinue });
 			this.emitState();
-			// A held prompt gets its own turn, so drain one per idle point
-			// rather than concatenating the queue into a single message.
-			if (!event.willContinue) ctx.setTimeout(() => this.flushQueue(), 0);
 		});
 		pi.on("turn_start", async (_event, ctx) => {
 			this.updateCtx(ctx);

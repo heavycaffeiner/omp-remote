@@ -86,7 +86,7 @@ class _PairingSheetState extends State<PairingSheet> {
           _PairingOptionTile(
             icon: Icons.qr_code_scanner,
             title: 'Scan a QR code',
-            subtitle: 'Point the camera at the code /remote-omp prints.',
+            subtitle: 'Point the camera at the code /remote prints.',
             onTap: () => Navigator.of(context).pop(const ScanQrChoice()),
           ),
           _PairingOptionTile(

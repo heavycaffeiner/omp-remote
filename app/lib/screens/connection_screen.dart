@@ -35,15 +35,20 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   @override
   void initState() {
     super.initState();
-    _reloadProfiles();
+    // Every write notifies, so the list is right however it changed: a deep
+    // link pairs without this screen ever being on top.
+    widget.profileStore.addListener(_reloadProfiles);
+    _profiles = widget.profileStore.readAll();
   }
 
   void _reloadProfiles() {
+    if (!mounted) return;
     setState(() => _profiles = widget.profileStore.readAll());
   }
 
   @override
   void dispose() {
+    widget.profileStore.removeListener(_reloadProfiles);
     super.dispose();
   }
 
@@ -59,6 +64,9 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     if (!mounted) return;
     final profile = ConnectionProfile(
       url: uri,
+      alternates: [
+        for (final address in saved.alternates) ?Uri.tryParse(address),
+      ],
       token: saved.token,
       role: saved.role,
       agentId: saved.agentId,
@@ -94,13 +102,13 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Takes the whole `remote-omp://pair?...` link from `/remote-omp`. One
+  /// Takes the whole `remote-omp://pair?...` link from `/remote`. One
   /// paste carries the address, the token, the role, and which session to
   /// open, so there is nothing left to fill in by hand.
   Future<void> _submitLink(String raw) async {
     final trimmed = raw.trim();
     if (trimmed.isEmpty) {
-      _showError('Paste the link shown by /remote-omp.');
+      _showError('Paste the link shown by /remote.');
       return;
     }
     final result = PairingPayload.parse(trimmed);
@@ -288,7 +296,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'Run /remote-omp on your workstation. It prints a QR code '
+              'Run /remote on your workstation. It prints a QR code '
               'and a link that pair this device with that session.',
               style: theme.textTheme.bodyMedium,
               textAlign: TextAlign.center,

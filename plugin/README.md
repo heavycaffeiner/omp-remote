@@ -21,7 +21,7 @@ extensions:
 ```
 
 Nothing else is needed. Out of the box the extension serves this workstation
-directly on port 8788 and uses no relay: `/remote-omp` prints a QR code the
+directly on port 8788 and uses no relay: `/remote` prints a QR code the
 app scans over your LAN or Tailscale.
 
 ## Configuration
@@ -29,7 +29,7 @@ app scans over your LAN or Tailscale.
 Settings live in `~/.omp/agent/omp-remote.json` (or
 `$PI_CODING_AGENT_DIR/omp-remote.json`, or the exact path in
 `OMP_REMOTE_CONFIG`), written at mode 0600 because it holds relay
-credentials. Change it with `/remote-omp config` rather than by hand. No
+credentials. Change it with `/remote config` rather than by hand. No
 setting is read from the environment.
 
 ```jsonc
@@ -62,39 +62,35 @@ Both transports may be active at once. A session with a relay configured is
 simultaneously relayed and directly reachable, exactly as
 `docs/protocol.md`'s Topology section describes.
 
-## Commands
+## The `/remote` command
 
-### `/remote`
+One command owns pairing, settings, and diagnostics: two names for one
+plugin only made the user guess which.
 
-Prints the current transport status: agent id, whether the relay connection
-is up and to which host, the local server's port and attached client
-counts, and a running event counter. Diagnostic only; it registers
-unconditionally, even when both transports are disabled, so `/remote` always
-tells you why nothing is reachable.
-
-### `/remote-omp`
-
-Prints a terminal QR code, a six-character pairing code, and a link for the
-OMPRemote app (`docs/protocol.md`, "Pairing").
-
-The code is what makes pairing without a camera bearable: six characters typed
-into the app instead of a 64-character token copied by hand. It is redeemed at
+Bare, it prints a terminal QR code, a six-character pairing code, and a link
+for the OMPRemote app (`docs/protocol.md`, "Pairing"). The code is what makes
+pairing without a camera bearable: six characters typed into the app instead
+of a 64-character token copied by hand. It is redeemed at
 `GET /pair?code=...`, works once, and expires after five minutes. Relay
 pairing has no code, since a relayed client cannot reach the local server.
 
-- Bare (`/remote-omp`): a **control** link. Direct is preferred whenever the
+- Bare (`/remote`): a **control** link. Direct is preferred whenever the
   local server is up; falls back to relay otherwise.
-- `/remote-omp viewer`: a **viewer** (read-only) link instead of control.
-- `/remote-omp relay`: forces the relay form of the link even when the local
+- `/remote viewer`: a **viewer** (read-only) link instead of control.
+- `/remote relay`: forces the relay form of the link even when the local
   server is up.
-- `/remote-omp config`: shows the current settings and how to change each of
+- `/remote status`: agent id, whether the relay connection is up and to which
+  host, the local server's port and attached client counts, and a running
+  event counter. Diagnostic only, and registered even when both transports
+  are disabled, so it always tells you why nothing is reachable.
+- `/remote config`: shows the current settings and how to change each of
   them. No token is ever echoed back, only whether one is set.
-- `/remote-omp config relay <url> <token>`: routes this session through a
+- `/remote config relay <url> <token>`: routes this session through a
   relay as well as serving directly, and connects immediately. Pointing at a
   different relay drops the role tokens, since those belong to whichever
   relay issued them.
-- `/remote-omp config relay off`: back to direct only.
-- `/remote-omp config port|bind|direct|bash|approval`: the remaining
+- `/remote config relay off`: back to direct only.
+- `/remote config port|bind|direct|bash|approval`: the remaining
   settings. The reply says when a change needs a restart, which is the case
   for anything the already-bound listening socket owns.
 
@@ -110,10 +106,10 @@ from the app's list.
 
 Relay pairing needs a client-facing secret that the relay operator issues,
 which is not the same credential the plugin dials the relay with. Run
-`/remote-omp config relay control <token>` with the relay's
-`OMP_RELAY_CONTROL_TOKEN`, and `/remote-omp config relay viewer <token>` with
+`/remote config relay control <token>` with the relay's
+`OMP_RELAY_CONTROL_TOKEN`, and `/remote config relay viewer <token>` with
 its `OMP_RELAY_VIEWER_TOKEN`, for the corresponding link to be available.
-Without them `/remote-omp relay` fails and says which one to set.
+Without them `/remote relay` fails and says which one to set.
 
 The agent token is never substituted for either. It authenticates at
 `/agent` and can claim any `agentId`, which is more power than any client
@@ -143,7 +139,7 @@ take the whole session down with it.
 The plugin runs its own WebSocket server (the `local.port` setting, default
 `8788`) serving `/client`, `/agent`, `/pair`, `/join`, and `/healthz` as
 `docs/protocol.md` specifies. Tokens are minted at startup and handed out only
-through a redeemed pairing code or a `/remote-omp` link, never logged. Use this
+through a redeemed pairing code or a `/remote` link, never logged. Use this
 on a LAN or over Tailscale, where the phone can already reach the workstation;
 no relay or third party is involved.
 

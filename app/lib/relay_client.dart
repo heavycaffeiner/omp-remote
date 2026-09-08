@@ -19,12 +19,18 @@ class ConnectionProfile {
     required this.url,
     required this.token,
     required this.role,
+    this.alternates = const [],
     this.agentId,
     this.name,
   });
 
   /// WebSocket origin, without the `/client` path, e.g. `ws://host:8788`.
   final Uri url;
+
+  /// Other addresses for the same session. A workstation cannot know which
+  /// of its interfaces the phone can reach, so every candidate is tried.
+  final List<Uri> alternates;
+
   final String token;
   final ClientRole role;
 
@@ -34,6 +40,13 @@ class ConnectionProfile {
 
   /// Display name sent in `hello`.
   final String? name;
+
+  /// Every address to try, best guess first and duplicates removed.
+  List<Uri> get candidates => <Uri>[
+    url,
+    for (final alternate in alternates)
+      if (alternate != url) alternate,
+  ];
 }
 
 class ConnectionStatus {
@@ -101,6 +114,11 @@ class RelayClient {
   ConnectionProfile profile;
   final String _clientId;
 
+  /// Called when a candidate other than [ConnectionProfile.url] is the one
+  /// that answered, so a saved profile can start there next time instead of
+  /// paying the timeout on a dead address again.
+  void Function(Uri origin)? onAddressChanged;
+
   WebSocketChannel? _channel;
   StreamSubscription<Object?>? _subscription;
   Timer? _reconnectTimer;
@@ -150,35 +168,116 @@ class RelayClient {
     await _connectOnce();
   }
 
+  /// Retries now instead of waiting out the backoff. What a user does after
+  /// fixing the thing that was blocking the connection, so waiting up to the
+  /// backoff ceiling to find out would be the wrong answer.
+  Future<void> retryNow() async {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _backoffSeconds = 1;
+    _closed = false;
+    await _connectOnce();
+  }
+
+  Uri _clientUri(Uri origin) =>
+      origin.replace(path: '${origin.path}/client'.replaceAll('//', '/'));
+
+  static void _closeQuietly(WebSocketChannel channel) {
+    // A channel whose connect never completed throws on close; there is
+    // nothing to report about an attempt we are abandoning anyway.
+    unawaited(channel.sink.close().catchError((Object _) {}));
+  }
+
+  /// Opens every candidate address at once and keeps the first that answers.
+  ///
+  /// Trying them one at a time would spend the 15 second connect timeout on
+  /// each address the phone cannot reach, and the unreachable one tends to
+  /// come first: the workstation ranks a Tailscale address ahead of its LAN
+  /// address, which is the wrong guess whenever the phone is not on the
+  /// tailnet.
   Future<void> _connectOnce() async {
     if (_closed) return;
     final generation = ++_generation;
+    // A retry keeps the reason the previous attempt failed with and says it
+    // is retrying. Clearing the error and dropping back to `connecting` on
+    // every attempt is what turned an unreachable host into an endless
+    // spinner with nothing on screen to explain it.
+    final retrying = _status.lastError != null;
     _setStatus(
-      (s) => s.copyWith(phase: ConnectionPhase.connecting, clearError: true),
+      (s) => s.copyWith(
+        phase: retrying
+            ? ConnectionPhase.reconnecting
+            : ConnectionPhase.connecting,
+      ),
     );
 
-    final uri = profile.url.replace(
-      path: '${profile.url.path}/client'.replaceAll('//', '/'),
-    );
+    final candidates = profile.candidates;
+    final settled = Completer<(Uri, WebSocketChannel)>();
+    final attempts = <WebSocketChannel>[];
+    var outstanding = candidates.length;
+    Object? firstError;
 
-    WebSocketChannel channel;
-    try {
-      channel = IOWebSocketChannel.connect(
-        uri,
+    for (final origin in candidates) {
+      final channel = IOWebSocketChannel.connect(
+        _clientUri(origin),
         headers: {'Authorization': 'Bearer ${profile.token}'},
         connectTimeout: const Duration(seconds: 15),
         pingInterval: const Duration(seconds: 20),
       );
-      await channel.ready;
+      attempts.add(channel);
+      unawaited(
+        channel.ready.then(
+          (_) {
+            if (!settled.isCompleted) settled.complete((origin, channel));
+          },
+          onError: (Object error) {
+            // The first failure is the one worth reporting: candidates are
+            // in the workstation's preference order, so it names the address
+            // the user was told to expect.
+            firstError ??= error;
+            outstanding -= 1;
+            if (outstanding == 0 && !settled.isCompleted) {
+              settled.completeError(firstError ?? error);
+            }
+          },
+        ),
+      );
+    }
+
+    (Uri, WebSocketChannel) winner;
+    try {
+      winner = await settled.future;
     } catch (e) {
       if (generation != _generation) return;
+      for (final attempt in attempts) {
+        _closeQuietly(attempt);
+      }
       _handleDisconnect(_describeConnectError(e));
       return;
     }
 
+    final origin = winner.$1;
+    final channel = winner.$2;
+    for (final attempt in attempts) {
+      if (attempt != channel) _closeQuietly(attempt);
+    }
+
     if (generation != _generation) {
-      unawaited(channel.sink.close());
+      _closeQuietly(channel);
       return;
+    }
+
+    // Reconnects go straight to the address that worked.
+    if (origin != profile.url) {
+      profile = ConnectionProfile(
+        url: origin,
+        alternates: candidates,
+        token: profile.token,
+        role: profile.role,
+        agentId: profile.agentId,
+        name: profile.name,
+      );
+      onAddressChanged?.call(origin);
     }
 
     _channel = channel;

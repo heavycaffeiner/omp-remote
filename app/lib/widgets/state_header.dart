@@ -16,6 +16,7 @@ class StateHeader extends StatefulWidget {
     required this.status,
     required this.state,
     this.activeSessionLabel,
+    this.onRetry,
     super.key,
   });
 
@@ -26,6 +27,10 @@ class StateHeader extends StatefulWidget {
   /// text. Shown as the first summary part so a multi-session user always
   /// knows which agent they are talking to.
   final String? activeSessionLabel;
+
+  /// Retries the connection now rather than waiting out the backoff. Shown
+  /// as an affordance only while the connection is down.
+  final VoidCallback? onRetry;
 
   @override
   State<StateHeader> createState() => _StateHeaderState();
@@ -63,15 +68,21 @@ class _StateHeaderState extends State<StateHeader> {
               : (state.streaming ? 'Streaming' : 'Idle'));
 
     final usage = state?.contextUsage;
+    final error = status.lastError;
+    final connected = status.phase == ConnectionPhase.connected;
 
-    final summaryParts = <String>[
-      ?widget.activeSessionLabel,
-      connectionText,
-      if (status.role == ClientRole.viewer) 'Read-only',
-      if (state?.model != null) state!.model!.label,
-      ?activityText,
-      if (usage != null) '${usage.percent.toStringAsFixed(0)}% context',
-    ];
+    // While the connection is not up, the reason it is not up is the only
+    // thing worth the collapsed line. Everything else is stale by then.
+    final summaryParts = connected || error == null
+        ? <String>[
+            ?widget.activeSessionLabel,
+            connectionText,
+            if (status.role == ClientRole.viewer) 'Read-only',
+            if (state?.model != null) state!.model!.label,
+            ?activityText,
+            if (usage != null) '${usage.percent.toStringAsFixed(0)}% context',
+          ]
+        : <String>[connectionText, error];
 
     return PanelShell(
       leading: Icon(connectionIcon, size: 16, color: connectionColor),
@@ -80,9 +91,19 @@ class _StateHeaderState extends State<StateHeader> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurface,
+          color: connected || error == null
+              ? theme.colorScheme.onSurface
+              : theme.colorScheme.error,
         ),
       ),
+      trailing: connected || widget.onRetry == null
+          ? null
+          : IconButton(
+              onPressed: widget.onRetry,
+              tooltip: 'Try connecting again',
+              iconSize: 18,
+              icon: const Icon(Icons.refresh),
+            ),
       expanded: _expanded,
       onToggle: () => setState(() => _expanded = !_expanded),
       semanticsLabel:

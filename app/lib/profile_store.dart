@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'protocol.dart';
@@ -19,6 +20,7 @@ class SavedProfile {
     required this.url,
     required this.token,
     required this.role,
+    this.alternates = const [],
     this.agentId,
     this.deviceName,
     this.cwd,
@@ -29,6 +31,11 @@ class SavedProfile {
   final String id;
   final String label;
   final String url;
+
+  /// Other addresses that reach the same session. Kept so a reconnect on a
+  /// different network can find the workstation without re-pairing.
+  final List<String> alternates;
+
   final String token;
   final ClientRole role;
 
@@ -55,6 +62,7 @@ class SavedProfile {
   SavedProfile copyWith({
     String? label,
     String? url,
+    List<String>? alternates,
     String? token,
     ClientRole? role,
     String? agentId,
@@ -68,6 +76,7 @@ class SavedProfile {
       id: id,
       label: label ?? this.label,
       url: url ?? this.url,
+      alternates: alternates ?? this.alternates,
       token: token ?? this.token,
       role: role ?? this.role,
       agentId: clearAgentId ? null : (agentId ?? this.agentId),
@@ -82,6 +91,7 @@ class SavedProfile {
     'id': id,
     'label': label,
     'url': url,
+    if (alternates.isNotEmpty) 'alternates': alternates,
     'token': token,
     'role': role == ClientRole.control ? 'control' : 'viewer',
     if (agentId != null) 'agentId': agentId,
@@ -107,10 +117,14 @@ class SavedProfile {
         isDirect is! bool) {
       return null;
     }
+    final rawAlternates = map['alternates'];
     return SavedProfile(
       id: id,
       label: label,
       url: url,
+      alternates: rawAlternates is List
+          ? [for (final entry in rawAlternates) ?asString(entry)]
+          : const [],
       token: token,
       role: role,
       agentId: asString(map['agentId']),
@@ -122,14 +136,39 @@ class SavedProfile {
   }
 }
 
-class ProfileStore {
+/// Notifies on every write, so a screen showing the list is correct however
+/// the list changed. A deep link pairs without ever passing through the
+/// connection screen, which is how a saved connection went missing from the
+/// list until the app was restarted.
+class ProfileStore extends ChangeNotifier {
   ProfileStore(this._prefs);
 
   final SharedPreferences _prefs;
 
   static Future<ProfileStore> load() async {
     final prefs = await SharedPreferences.getInstance();
-    return ProfileStore(prefs);
+    final store = ProfileStore(prefs);
+    await store.collapseDuplicates();
+    return store;
+  }
+
+  /// Merges entries that name the same session down to one, keeping the
+  /// most recently used. Repairs a device that accumulated a row per
+  /// pairing before re-pairing started replacing the existing entry.
+  Future<void> collapseDuplicates() async {
+    final all = readAll();
+    final kept = <SavedProfile>[];
+    final seen = <String>{};
+    for (final profile in all) {
+      final agentId = profile.agentId;
+      if (agentId == null) {
+        kept.add(profile);
+        continue;
+      }
+      if (seen.add(agentId)) kept.add(profile);
+    }
+    if (kept.length == all.length) return;
+    await _writeAll(kept);
   }
 
   /// All saved profiles, most-recently-used first. A profile never used
@@ -156,6 +195,7 @@ class ProfileStore {
   Future<void> _writeAll(List<SavedProfile> profiles) async {
     final encoded = jsonEncode(profiles.map((p) => p.toJson()).toList());
     await _prefs.setString(_prefsKey, encoded);
+    notifyListeners();
   }
 
   Future<void> upsert(SavedProfile profile) async {
@@ -166,6 +206,65 @@ class ProfileStore {
     } else {
       all.add(profile);
     }
+    await _writeAll(all);
+  }
+
+  /// Stores [profile], replacing whatever entry already names the same
+  /// session rather than adding a second one.
+  ///
+  /// One omp session is one connection however many times its pairing link
+  /// is scanned; a fresh link only carries a fresh token for the same
+  /// session, and several participants can hold one at once. Returns the
+  /// entry as stored, which keeps the existing id when one was replaced so
+  /// callers do not orphan a renamed connection.
+  Future<SavedProfile> upsertForAgent(SavedProfile profile) async {
+    final agentId = profile.agentId;
+    final all = readAll();
+    final index = agentId == null
+        ? -1
+        : all.indexWhere((p) => p.agentId == agentId);
+    if (index < 0) {
+      all.add(profile);
+      await _writeAll(all);
+      return profile;
+    }
+    final existing = all[index];
+    // The user's own label survives a re-pair; everything else comes from
+    // the new link, since that is what is current.
+    final merged = profile.copyWith(label: existing.label);
+    final stored = SavedProfile(
+      id: existing.id,
+      label: merged.label,
+      url: merged.url,
+      alternates: merged.alternates,
+      token: merged.token,
+      role: merged.role,
+      agentId: merged.agentId,
+      deviceName: merged.deviceName,
+      cwd: merged.cwd,
+      lastUsedAt: existing.lastUsedAt,
+      isDirect: merged.isDirect,
+    );
+    all[index] = stored;
+    await _writeAll(all);
+    return stored;
+  }
+
+  /// Moves [origin] to the front of a profile's address list, so the next
+  /// connect starts with the one that actually answered. A no-op if the
+  /// profile is gone or already starts there.
+  Future<void> recordWorkingAddress(String id, String origin) async {
+    final all = readAll();
+    final index = all.indexWhere((p) => p.id == id);
+    if (index < 0) return;
+    final existing = all[index];
+    if (existing.url == origin) return;
+    final others = <String>[
+      existing.url,
+      for (final address in existing.alternates)
+        if (address != origin && address != existing.url) address,
+    ];
+    all[index] = existing.copyWith(url: origin, alternates: others);
     await _writeAll(all);
   }
 

@@ -39,21 +39,29 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
     final label = _labelController.text.trim().isEmpty
         ? payload.url.host
         : _labelController.text.trim();
+    final alternates = [
+      for (final address in payload.alternates) address.toString(),
+    ];
     final saved = SavedProfile(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       label: label,
       url: payload.url.toString(),
+      alternates: alternates,
       token: payload.token,
       role: payload.role,
       agentId: payload.agentId,
       deviceName: payload.name,
       isDirect: payload.transport == PairingTransport.direct,
     );
-    await widget.profileStore.upsert(saved);
+    // Re-pairing the same session replaces its entry rather than adding a
+    // second: one omp session is one connection, however many times its
+    // link is scanned.
+    final stored = await widget.profileStore.upsertForAgent(saved);
     if (!mounted) return;
 
     final connection = ConnectionProfile(
       url: payload.url,
+      alternates: payload.alternates,
       token: payload.token,
       role: payload.role,
       agentId: payload.agentId,
@@ -65,7 +73,7 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
         builder: (_) => SessionScreen(
           relayClient: client,
           profileStore: widget.profileStore,
-          savedProfileId: saved.id,
+          savedProfileId: stored.id,
         ),
       ),
     );
