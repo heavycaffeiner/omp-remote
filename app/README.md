@@ -16,9 +16,11 @@ under `CFBundleURLTypes`, the camera usage string the QR scanner needs,
 and the display name). Regenerating the rest is safe; regenerating those
 two loses the pairing entry points and the display name.
 
-The mark is a single pi on a black square: the glyph from STIX Two Math,
-outlined onto a 1024 grid so it carries a real letterform and needs no font
-installed.
+The mark is a single pi on a black square, outlined onto a 1024 grid so it
+carries a real letterform and needs no font installed. The outline comes from
+STIX Two Math, Copyright (c) 2001-2021 by the STI Pub Companies, under the
+SIL Open Font License 1.1 (<https://openfontlicense.org>); the attribution
+travels with the path in both files that hold it.
 `tool/generate_notification_icon.dart` is the raster source of truth: it
 fills that outline and writes `assets/icon/omp-remote.png` (the opaque tile),
 `omp-remote-foreground.png` (the glyph alone, scaled to fit the Android

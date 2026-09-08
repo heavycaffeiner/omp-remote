@@ -196,4 +196,52 @@ void main() {
     expect(store.entries, hasLength(1));
     expect(store.entries.single.kind, TranscriptKind.tool);
   });
+
+  testWidgets('a turn that thinks before answering still names its speaker', (
+    WidgetTester tester,
+  ) async {
+    final client = RelayClient(
+      profile: ConnectionProfile(
+        url: Uri.parse('ws://localhost:8788'),
+        token: 'test-token',
+        role: ClientRole.control,
+        agentId: 'host/agent',
+      ),
+    );
+    addTearDown(client.dispose);
+    final store = SessionStore(relayClient: client);
+    addTearDown(store.dispose);
+
+    // Two assistant rows in one run: the first carries only thinking, the
+    // answer lands in the next. Nothing breaks the run between them, so the
+    // second row is a continuation and would draw no label of its own.
+    store.applyEventForTest(
+      const MessageEvent(
+        role: 'assistant',
+        text: '',
+        thinking: 'weighing the options',
+      ),
+    );
+    store.applyEventForTest(
+      const MessageEvent(role: 'assistant', text: 'the answer'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: TranscriptView(sessionStore: store)),
+      ),
+    );
+    await tester.pump();
+
+    // The label belongs on the first row of the run that carries prose. A
+    // thinking-only row opening the run must not consume it.
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Text && (widget.data ?? '') == 'OMP',
+        description: 'the agent role label',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('the answer'), findsOneWidget);
+  });
 }

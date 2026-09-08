@@ -34,8 +34,10 @@ const _buckets = <String, int>{
 const _scale = 8;
 const _grid = 1024.0;
 
-// The pi from STIX Two Math, scaled so its longer side is 600 of the 1024
-// grid and centred on it. Absolute moveto, lineto, curveto, closepath only.
+// The pi outline from STIX Two Math, Copyright (c) 2001-2021 by the STI Pub
+// Companies, licensed under the SIL Open Font License 1.1
+// (https://openfontlicense.org). Scaled so its longer side is 600 of the
+// 1024 grid and centred on it. Absolute moveto, lineto, curveto, closepath.
 const _mark =
     'M 812 269 L 812 251.6 L 424.7 251.6 '
     'C 311.8 251.6 240.2 287.4 212 387.2 L 233.7 398.1 '

@@ -3,10 +3,12 @@
 
   <rect width="1024" height="1024" fill="#000000"/>
 
-  <!-- The pi from STIX Two Math, outlined onto this 1024 grid so the mark
-       carries a real letterform instead of three rectangles and needs no
-       font installed. tool/generate_notification_icon.dart holds the same
-       path; a change to one means changing both. -->
+  <!-- The pi outline is taken from STIX Two Math, Copyright (c) 2001-2021 by
+       the STI Pub Companies, licensed under the SIL Open Font License 1.1
+       (https://openfontlicense.org). It is scaled onto this 1024 grid so the
+       mark carries a real letterform and needs no font installed.
+       tool/generate_notification_icon.dart holds the same path; a change to
+       one means changing both. -->
   <path fill="#ffffff" d="M 812 269 L 812 251.6 L 424.7 251.6
        C 311.8 251.6 240.2 287.4 212 387.2 L 233.7 398.1
        C 268.4 339.5 292.3 338.4 419.2 338.4

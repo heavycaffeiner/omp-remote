@@ -65,14 +65,22 @@ class _TranscriptViewState extends State<TranscriptView> {
     setState(() => _following = atBottom);
   }
 
-  void _onTranscriptChanged() {
-    // Sampled before the rebuild: the layout that answers "was the user at
-    // the bottom?" is the one from before the new row was added.
-    if (!_following || !_atBottom) return;
+  /// Re-pins the viewport to the bottom after the frame that changed its
+  /// height. Sampling `_atBottom` before the rebuild is what keeps a user who
+  /// scrolled up from being yanked back.
+  void _pinTail() {
+    if (!_following) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients || !_following) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      final max = _scroll.position.maxScrollExtent;
+      if (_scroll.position.pixels >= max) return;
+      _scroll.jumpTo(max);
     });
+  }
+
+  void _onTranscriptChanged() {
+    if (!_atBottom) return;
+    _pinTail();
   }
 
   Future<void> _jumpToLatest() async {
@@ -113,7 +121,10 @@ class _TranscriptViewState extends State<TranscriptView> {
               itemBuilder: (context, index) => _TranscriptRow(
                 key: ValueKey(entries[index].id),
                 entry: entries[index],
-                showLabel: _startsRun(entries, index),
+                showLabel: _labelsRun(entries, index),
+                // A streaming delta only bumps its own row's revision, so the
+                // last row has to re-pin the tail itself as it grows taller.
+                onGrew: index == entries.length - 1 ? _pinTail : null,
               ),
             ),
             if (!_following)
@@ -136,9 +147,9 @@ class _TranscriptViewState extends State<TranscriptView> {
   }
 }
 
-/// Whether the entry at [index] starts a new run, which is what decides
-/// whether it draws a role label. Only two message rows from the same role
-/// form a run; a tool card or a notice always breaks it.
+/// Whether the entry at [index] starts a run: a stretch of consecutive
+/// message rows from the same role. A tool card or a notice always breaks
+/// one.
 bool _startsRun(List<TranscriptEntry> entries, int index) {
   if (index <= 0 || index >= entries.length) return true;
   final entry = entries[index];
@@ -146,6 +157,23 @@ bool _startsRun(List<TranscriptEntry> entries, int index) {
   if (entry.kind != TranscriptKind.message) return true;
   if (previous.kind != TranscriptKind.message) return true;
   return previous.role != entry.role;
+}
+
+/// Whether the entry at [index] draws its run's role label.
+///
+/// The label names a speaker for something they said, so it belongs on the
+/// first row of the run that actually carries prose. Putting it on the first
+/// row unconditionally loses it whenever a run opens with a thinking-only
+/// row, which is what a turn that reasons before answering looks like.
+bool _labelsRun(List<TranscriptEntry> entries, int index) {
+  final entry = entries[index];
+  if (entry.kind != TranscriptKind.message) return false;
+  if (entry.text.trim().isEmpty) return false;
+  for (var i = index - 1; i >= 0; i--) {
+    if (_startsRun(entries, i + 1)) return true;
+    if (entries[i].text.trim().isNotEmpty) return false;
+  }
+  return true;
 }
 
 class _EmptyTranscript extends StatelessWidget {
@@ -175,27 +203,35 @@ class _TranscriptRow extends StatelessWidget {
   const _TranscriptRow({
     required this.entry,
     required this.showLabel,
+    this.onGrew,
     super.key,
   });
 
   final TranscriptEntry entry;
 
-  /// Whether this row starts a run and therefore names its speaker.
+  /// Whether this row names its speaker.
   final bool showLabel;
+
+  /// Called on every repaint of this row. Set only on the last row, whose
+  /// height is what the viewport has to keep up with while it streams.
+  final VoidCallback? onGrew;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: entry.revision,
-      builder: (context, _) => switch (entry.kind) {
-        TranscriptKind.message => _MessageRow(
-          entry: entry,
-          showLabel: showLabel,
-        ),
-        TranscriptKind.tool => _ToolCard(entry: entry),
-        TranscriptKind.notice => _NoticeLine(entry: entry),
-        TranscriptKind.status ||
-        TranscriptKind.system => _MarkerRow(text: entry.text),
+      builder: (context, _) {
+        onGrew?.call();
+        return switch (entry.kind) {
+          TranscriptKind.message => _MessageRow(
+            entry: entry,
+            showLabel: showLabel,
+          ),
+          TranscriptKind.tool => _ToolCard(entry: entry),
+          TranscriptKind.notice => _NoticeLine(entry: entry),
+          TranscriptKind.status ||
+          TranscriptKind.system => _MarkerRow(text: entry.text),
+        };
       },
     );
   }
@@ -254,16 +290,11 @@ class _MessageRow extends StatelessWidget {
         ? scheme.primary
         : scheme.onSurfaceVariant;
 
-    // A label names a speaker for something they said. A row that carries
-    // only a collapsed thinking disclosure has no prose to attribute, and
-    // labelling it doubles the line count of a tool-heavy turn.
-    final hasProse = entry.text.trim().isNotEmpty;
-
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (showLabel && hasProse) _RoleLabel(label: label, color: labelColor),
+        if (showLabel) _RoleLabel(label: label, color: labelColor),
         if (entry.thinking.isNotEmpty)
           _ThinkingBlock(text: entry.thinking, open: entry.open),
         for (final segment in _splitTagged(entry.text))
