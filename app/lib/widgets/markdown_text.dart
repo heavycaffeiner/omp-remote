@@ -29,11 +29,10 @@ class MarkdownText extends StatelessWidget {
 
 /// The sheet the transcript renders markdown with, built per call.
 ///
-/// It was memoized for a while. Measured against building it fresh, the
-/// difference is inside the noise of the benchmark that produced it: 21ms
-/// against 22ms to first render 3200 entries. Keying a cache correctly is
-/// not free either, since this app takes its palette from the wallpaper, so
-/// colours change while brightness does not.
+/// Building it per call measures the same as memoizing it: 22ms against
+/// 21ms to first render 3200 entries. A correct cache key is not free
+/// either, since this app takes its palette from the wallpaper, so the
+/// colours change while the brightness does not.
 MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? style) {
   final theme = Theme.of(context);
   final scheme = theme.colorScheme;
