@@ -10,6 +10,13 @@ questions the agent would otherwise ask at your keyboard.
 | `relay/`  | A Go WebSocket hub in Docker, for when the phone cannot reach you.  |
 | `app/`    | OMPRemote, a Flutter client for Android and iOS.                    |
 
+| | | |
+| :---: | :---: | :---: |
+| ![Connections](docs/screenshots/connections.png) | ![Pairing](docs/screenshots/pairing.png) | ![Session](docs/screenshots/session.png) |
+| Saved connections | One action, three ways to pair | The session as a log |
+| ![Status](docs/screenshots/status.png) | ![Settings](docs/screenshots/settings.png) | |
+| Model, thinking, context, viewers | Appearance, including Material You | |
+
 ## Two ways to connect
 
 **Direct.** The plugin listens on port 8788 and the phone dials it. No relay,

@@ -7,6 +7,10 @@ prompts, answer interactive requests, and change session settings from a
 phone. Slash commands are listed for reference but run at the workstation:
 the extension API has no way to invoke one remotely.
 
+Screenshots of every screen described below are in
+[`../docs/screenshots/`](../docs/screenshots/) and on the root
+[README](../README.md).
+
 Targets Android and iOS. The `android/` and `ios/` directories are
 regenerable with `flutter create --platforms=android,ios .`; only the two
 files carrying hand-written configuration are checked in, namely
