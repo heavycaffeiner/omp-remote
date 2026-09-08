@@ -197,6 +197,9 @@ export interface ReqSelect {
 	title: string;
 	message: string;
 	options: ReqSelectOption[];
+	/// Whether the question takes several picks. A client that ignores this
+	/// answers with one `index`, which the agent accepts as a single pick.
+	multi?: boolean;
 	timeout?: number;
 }
 export interface ReqConfirm {
@@ -233,6 +236,11 @@ export type InteractiveRequest = ReqSelect | ReqConfirm | ReqInput | ReqEditor |
 export interface AnsSelect {
 	index: number;
 }
+/// Answer to a `select` whose `multi` is set. Indexes are into the request's
+/// own `options`, in the order the client wants them read back.
+export interface AnsSelectMulti {
+	indexes: number[];
+}
 export interface AnsConfirm {
 	confirmed: boolean;
 }
@@ -243,7 +251,7 @@ export interface AnsApproval {
 	decision: "allow" | "deny" | "always";
 }
 
-export type RequestAnswer = AnsSelect | AnsConfirm | AnsValue | AnsApproval;
+export type RequestAnswer = AnsSelect | AnsSelectMulti | AnsConfirm | AnsValue | AnsApproval;
 
 export type RequestCancelReason = "answered_locally" | "timed_out" | "aborted" | "shutdown";
 
@@ -268,6 +276,11 @@ export interface StateSnapshot {
 	/// no controllable effort surface, which a client should render as a
 	/// disabled control rather than a full list.
 	thinkingLevels?: string[];
+	/// The prompts this plugin forwarded while the agent was busy, oldest
+	/// first. omp owns the queue and does not expose its contents, so this is
+	/// what a client can be shown: it never includes text typed at the
+	/// workstation. Absent when nothing is waiting.
+	queue?: string[];
 	streaming: boolean;
 	compacting?: boolean;
 	/// Whether omp has a message pending behind the current turn.

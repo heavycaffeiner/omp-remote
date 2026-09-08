@@ -105,7 +105,9 @@ void main() {
   testWidgets('a model with no effort control disables the picker', (
     tester,
   ) async {
-    final store = _Store(_snapshot(model: legacy));
+    // An empty list is the workstation saying this model takes no effort
+    // setting, which is a different thing from not having said yet.
+    final store = _Store(_snapshot(model: legacy, levels: const []));
     await _pump(tester, store);
 
     expect(find.text('This model has no thinking control'), findsOneWidget);
@@ -113,6 +115,19 @@ void main() {
       find.byType(DropdownButton<String>),
     );
     expect(dropdown.onChanged, isNull);
+  });
+
+  testWidgets('levels not reported yet do not blame the model', (tester) async {
+    // Null, not empty: before the first snapshot names them, claiming the
+    // model has no thinking control would be inventing an answer.
+    final store = _Store(_snapshot(model: sonnet));
+    await _pump(tester, store);
+
+    expect(find.text('This model has no thinking control'), findsNothing);
+    expect(
+      find.textContaining('Reading what this model accepts'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a model change replaces the offered levels', (tester) async {

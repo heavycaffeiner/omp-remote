@@ -264,8 +264,9 @@ Known, and unlikely to change without upstream API work.
   `set_follow_up_mode`, `set_interrupt_mode`, `cycle_model`, `stats`,
   `set_fast_mode`, and `branch` live on a session object extensions never
   receive. Each fails with an explicit error rather than pretending to work.
-  `new_session`, `end_session`, and `switch_session` need the context a slash
-  command carries, which `/remote` captures when you pair.
+  `new_session` and `switch_session` need the context a slash command
+  carries, which `/remote` captures when you pair. Ending a session outright
+  is not reachable; a new session is what replaces one.
 - **Prompts from other extensions are not forwarded.** Only this plugin's own
   tools, the shadowed `ask`, and tool denials reach your phone.
 

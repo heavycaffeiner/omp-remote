@@ -235,14 +235,17 @@ no-op'ing or calling something that would throw at runtime:
   live session and does not work: the text reaches the model verbatim
   instead of being expanded, so the command never runs.
 
-`new_session`, `end_session`, and `switch_session` do work, by a narrower
-route: they need `ExtensionCommandContext`, which only a slash-command
-handler receives, so the bridge keeps the one `/remote` was last invoked
-with. `/remote` is how a session gets paired, so it is present whenever a
-client can ask; a session paired some other way gets an error naming what to
-run. `ctx.shutdown()` is not that route: it is documented as a request the
-host may ignore, and it is ignored in both TUI and RPC mode, so ending a
-session leaves it for a fresh one instead.
+`new_session` and `switch_session` do work, by a narrower route: they need
+`ExtensionCommandContext`, which only a slash-command handler receives, so
+the bridge keeps the one `/remote` was last invoked with. `/remote` is how a
+session gets paired, so it is present whenever a client can ask; a session
+paired some other way gets an error naming what to run.
+
+There is no command for ending a session. `ctx.shutdown()` looked like one
+and is documented as a request the host may ignore: it is ignored in both TUI
+and RPC mode, so a command built on it reported success and did nothing.
+`new_session` is what replaces a session, and the transcript it leaves stays
+on disk.
 
 Role model assignments are reachable, by a different route: they are
 settings, not session state, so `src/model-roles.ts` reaches the live

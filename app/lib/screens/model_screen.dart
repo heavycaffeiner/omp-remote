@@ -179,14 +179,20 @@ class _ModelScreenState extends State<ModelScreen> {
   Widget _buildSessionTab(BuildContext context) {
     final state = widget.sessionStore.state;
     final locked = !widget.canControl;
-    // The state snapshot names them for the model in use. The model list is
-    // the fallback for a client that attached before the first snapshot, and
-    // an empty result means this model takes no effort setting at all.
-    final currentRow = _models.firstWhere(
-      (m) => m.label == _current?.label,
-      orElse: () => const ModelInfo(provider: '', id: ''),
-    );
-    final levels = state?.thinkingLevels ?? currentRow.thinking ?? const [];
+    // Three cases, and they must not be conflated. The workstation names the
+    // levels for the model in use; the model list answers for a client that
+    // has a snapshot but no row yet; and null in both means nobody has said
+    // anything, which is not the same as a model that takes no effort
+    // setting at all.
+    final row = _models.where((m) => m.label == _current?.label).firstOrNull;
+    final reported = state?.thinkingLevels ?? row?.thinking;
+    final known = reported != null;
+    final levels = reported ?? const <String>[];
+    // A model with no effort control reports an empty list, which is what
+    // disables the picker. Before anything is reported the picker is idle
+    // too, but the row says it is still loading rather than blaming the
+    // model.
+    final noControl = known && levels.isEmpty;
 
     return Column(
       children: [
@@ -200,10 +206,12 @@ class _ModelScreenState extends State<ModelScreen> {
           leading: const Icon(Icons.psychology_outlined, size: 20),
           title: const Text('Thinking'),
           subtitle: Text(
-            levels.isEmpty
-                ? 'This model has no thinking control'
-                : (state?.thinkingLevel ??
-                      'not set for this session, using the workstation default'),
+            !known
+                ? 'Reading what this model accepts...'
+                : (noControl
+                      ? 'This model has no thinking control'
+                      : (state?.thinkingLevel ??
+                            'not set for this session, using the workstation default')),
           ),
           trailing: DropdownButton<String>(
             value: levels.contains(state?.thinkingLevel)

@@ -24,6 +24,7 @@ import {
 	safeStringifyInput,
 	truncateText,
 	TEXT_MAX_BYTES,
+	thinkingLevelsFor,
 	TOOL_INPUT_MAX_BYTES,
 } from "./normalize.js";
 import type {
@@ -56,6 +57,13 @@ interface PendingRequestEntry {
 	timer?: Timer;
 }
 
+/// A raised interactive request: its id, so it can be withdrawn, and the
+/// answer it is waiting for.
+export interface PendingRequestHandle {
+	id: string;
+	answer: Promise<RequestAnswer | undefined>;
+}
+
 let requestCounter = 0;
 function nextRequestId(): string {
 	requestCounter += 1;
@@ -68,8 +76,15 @@ export function validateAnswerForRequest(request: InteractiveRequest, response: 
 	if (!response || typeof response !== "object") return undefined;
 	const r = response as Record<string, unknown>;
 	switch (request.k) {
-		case "select":
+		case "select": {
+			// A multi question accepts either shape: a client that ignores
+			// `multi` answers with one index, which is a valid single pick.
+			if (Array.isArray(r.indexes)) {
+				const indexes = r.indexes.filter((value): value is number => typeof value === "number");
+				return indexes.length === r.indexes.length && indexes.length > 0 ? { indexes } : undefined;
+			}
 			return typeof r.index === "number" ? { index: r.index } : undefined;
+		}
 		case "confirm":
 			return typeof r.confirmed === "boolean" ? { confirmed: r.confirmed } : undefined;
 		case "input":
@@ -104,6 +119,14 @@ export class SessionBridge {
 	/// Write-tool arguments held between `tool_execution_start` and its end,
 	/// because the result carries neither the content nor a diff.
 	private readonly pendingWrites = new Map<string, { path: string; content: string }>();
+
+	/// Prompts this plugin handed to omp while the agent was working, oldest
+	/// first. omp owns the real queue and exposes only whether it is empty
+	/// (`hasPendingMessages()`), never its contents, so this is the only list
+	/// a client can be shown. Held here rather than in each client so every
+	/// attached client sees the same one, and dropped as soon as omp reports
+	/// nothing pending. Text typed at the workstation never appears in it.
+	private readonly forwarded: string[] = [];
 
 	/// Latest todo list, so a client attaching mid-run sees it without
 	/// waiting for the next todo mutation.
@@ -226,10 +249,14 @@ export class SessionBridge {
 		const modelRef = modelToRef(ctx?.model);
 		const thinkingLevel = ctx ? this.pi.getThinkingLevel() : undefined;
 		const streaming = ctx ? !ctx.isIdle() : false;
-		// ExtensionContext has no queued-message count, only a boolean
-		// (hasPendingMessages). This reports presence, not the real count
-		// AgentSession.queuedMessageCount would give; see README's API gaps.
-		const queued = ctx?.hasPendingMessages() ? 1 : 0;
+		// `ExtensionContext` has no queued-message count, only a boolean, so
+		// `queued` is presence rather than the real count. The named entries
+		// are what this plugin forwarded; they are dropped at a turn boundary,
+		// never here, because omp registers a message a moment after
+		// `sendUserMessage` returns and this build would otherwise erase an
+		// entry with the very state push that announced it.
+		const pending = ctx?.hasPendingMessages() ?? false;
+		const queued = this.forwarded.length > 0 ? this.forwarded.length : pending ? 1 : 0;
 		const contextUsageRaw = ctx?.getContextUsage();
 		const contextUsage = contextUsageRaw
 			? {
@@ -257,10 +284,9 @@ export class SessionBridge {
 		if (thinkingLevel !== undefined) snapshot.thinkingLevel = thinkingLevel;
 		// Which levels this model accepts, so a client offers exactly those:
 		// `high` and `xhigh` exist on some models and not others.
-		const efforts = ctx?.model?.thinking?.efforts;
-		if (efforts !== undefined && efforts.length > 0) {
-			snapshot.thinkingLevels = ["inherit", "off", ...efforts];
-		}
+		const levels = thinkingLevelsFor(ctx?.model);
+		if (levels !== undefined) snapshot.thinkingLevels = levels;
+		if (this.forwarded.length > 0) snapshot.queue = [...this.forwarded];
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;
 		if (this.lastTodos !== undefined) snapshot.todos = this.lastTodos;
@@ -275,6 +301,29 @@ export class SessionBridge {
 		for (const sink of this.sinks) sink.sendState(frame);
 	}
 
+	/// Records a prompt handed to omp while the agent was busy, and pushes the
+	/// state that now names it. State is otherwise rebuilt only at turn
+	/// boundaries, which is the whole window a client needs to see it in.
+	noteForwardedPrompt(text: string): void {
+		this.forwarded.push(text);
+		this.emitState();
+	}
+
+	/// Drops forwarded prompts omp has consumed.
+	///
+	/// A steer leaves the queue one message per step, and the only signal an
+	/// extension gets is `hasPendingMessages()`: empty means every entry ran,
+	/// so the list clears. While something is still pending the count is
+	/// unknown, so the oldest is dropped, which is the one a steer takes.
+	private reconcileForwarded(ctx: ExtensionContext): void {
+		if (this.forwarded.length === 0) return;
+		if (!ctx.hasPendingMessages()) {
+			this.forwarded.length = 0;
+			return;
+		}
+		this.forwarded.shift();
+	}
+
 	// -------------------------------------------------------------------
 	// Interactive requests.
 	// -------------------------------------------------------------------
@@ -282,9 +331,9 @@ export class SessionBridge {
 	// Raises a request to every attached control client and waits for the
 	// first valid answer, a timeout, or explicit cancellation. Resolves to
 	// `undefined` when cancelled or timed out without an answer.
-	raiseRequest(request: InteractiveRequest): Promise<RequestAnswer | undefined> {
+	raiseRequest(request: InteractiveRequest): PendingRequestHandle {
 		const id = nextRequestId();
-		return new Promise<RequestAnswer | undefined>((resolve) => {
+		const answer = new Promise<RequestAnswer | undefined>((resolve) => {
 			const entry: PendingRequestEntry = { request, resolve };
 			this.pendingRequests.set(id, entry);
 			if (request.timeout && this.latestCtx) {
@@ -297,6 +346,17 @@ export class SessionBridge {
 			for (const sink of this.sinks) sink.sendRequest(frame);
 			this.emitState();
 		});
+		return { id, answer };
+	}
+
+	/// Withdraws one pending request: the clients showing it are told to drop
+	/// it and the waiter resolves unanswered. Needed when the same question
+	/// was answered somewhere else, at the workstation's own picker.
+	cancelRequest(id: string, reason: RequestCancelReason): void {
+		const entry = this.pendingRequests.get(id);
+		if (!entry) return;
+		this.settleRequest(id, reason);
+		entry.resolve(undefined);
 	}
 
 	// Called by a transport when a `response` frame arrives from a control
@@ -461,6 +521,11 @@ export class SessionBridge {
 		});
 		pi.on("turn_start", async (_event, ctx) => {
 			this.updateCtx(ctx);
+			// A steer drains one message per step, and a new turn is where a
+			// consumed one stops waiting. Reconciling here rather than in the
+			// state build is what keeps a just-forwarded prompt from being
+			// erased by its own announcement.
+			this.reconcileForwarded(ctx);
 			this.broadcastEvent({ k: "turn_start" });
 			this.emitState();
 		});

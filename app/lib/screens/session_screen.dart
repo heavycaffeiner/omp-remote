@@ -172,17 +172,15 @@ class _SessionScreenState extends State<SessionScreen>
   Future<void> _sendPrompt() async {
     final text = _promptController.text.trim();
     if (text.isEmpty || !_canControl) return;
-    final busy = !(_sessionStore.state?.streaming == false);
     setState(() => _sending = true);
     try {
+      // A prompt sent mid-turn is queued by the workstation, which reports
+      // the queue in its next state frame. Tracking it here as well raced
+      // that frame and could show an entry omp never took.
       await widget.relayClient.sendCommand(
         CommandName.prompt,
         args: {'text': text},
       );
-      // Sent while the agent was working, so it went into omp's queue rather
-      // than starting a turn. Remembering it here is the only way the panel
-      // can show what is waiting: the queue's contents are not readable.
-      if (busy) _sessionStore.noteQueuedPrompt(text);
       _promptController.clear();
     } catch (e) {
       if (mounted) {
@@ -323,7 +321,7 @@ class _SessionScreenState extends State<SessionScreen>
             Expanded(child: TranscriptView(sessionStore: _sessionStore)),
             QueuePanel(
               queued: _sessionStore.state?.queued ?? 0,
-              sent: _sessionStore.sentQueue,
+              sent: _sessionStore.state?.queue ?? const [],
             ),
             _buildComposer(context, streaming),
           ],

@@ -184,7 +184,13 @@ class _BodySurface extends StatelessWidget {
   Widget build(BuildContext context) => child;
 }
 
-class _SelectBody extends StatelessWidget {
+/// One question's options.
+///
+/// A single-pick question answers on tap, which is the fastest thing a phone
+/// can do. A `multi` question cannot: it has to collect picks and then be
+/// submitted, so the rows become checkboxes and a button sends them in the
+/// order they were chosen.
+class _SelectBody extends StatefulWidget {
   const _SelectBody({
     required this.request,
     required this.disabled,
@@ -196,8 +202,18 @@ class _SelectBody extends StatelessWidget {
   final void Function(Map<String, Object?> response) onAnswer;
 
   @override
+  State<_SelectBody> createState() => _SelectBodyState();
+}
+
+class _SelectBodyState extends State<_SelectBody> {
+  /// Chosen indexes in pick order, which is what the answer carries.
+  final List<int> _picked = [];
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final request = widget.request;
+    final multi = request.multi;
     return _BodySurface(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -208,6 +224,15 @@ class _SelectBody extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             MarkdownText(text: request.message),
           ],
+          if (multi) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Pick any number, then send.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
           const SizedBox(height: AppSpacing.sm),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 260),
@@ -216,59 +241,119 @@ class _SelectBody extends StatelessWidget {
               padding: EdgeInsets.zero,
               itemCount: request.options.length,
               separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
-              itemBuilder: (context, i) {
-                final option = request.options[i];
-                return Semantics(
-                  button: true,
-                  label:
-                      option.label +
-                      (option.description != null
-                          ? ', ${option.description}'
-                          : ''),
-                  child: Material(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(AppRadius.small),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(AppRadius.small),
-                      onTap: disabled
-                          ? null
-                          : () => onAnswer(selectResponse(i)),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 48),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.xs,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                option.label,
-                                style: theme.textTheme.bodyMedium,
-                              ),
-                              if (option.description != null)
-                                Text(
-                                  option.description!,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
+              itemBuilder: (context, i) => _OptionRow(
+                option: request.options[i],
+                selected: _picked.contains(i),
+                showsSelection: multi,
+                disabled: widget.disabled,
+                onTap: () {
+                  if (!multi) {
+                    widget.onAnswer(selectResponse(i));
+                    return;
+                  }
+                  setState(() {
+                    if (!_picked.remove(i)) _picked.add(i);
+                  });
+                },
+              ),
             ),
           ),
+          if (multi) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Semantics(
+              button: true,
+              label: _picked.isEmpty
+                  ? 'Send, nothing picked yet'
+                  : 'Send ${_picked.length} picked',
+              child: FilledButton(
+                onPressed: (widget.disabled || _picked.isEmpty)
+                    ? null
+                    : () => widget.onAnswer(multiSelectResponse(_picked)),
+                child: Text(
+                  _picked.isEmpty ? 'Send' : 'Send ${_picked.length}',
+                ),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// One tappable option. In a multi question the checkbox states the pick,
+/// never colour alone.
+class _OptionRow extends StatelessWidget {
+  const _OptionRow({
+    required this.option,
+    required this.selected,
+    required this.showsSelection,
+    required this.disabled,
+    required this.onTap,
+  });
+
+  final SelectOption option;
+  final bool selected;
+  final bool showsSelection;
+  final bool disabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      button: !showsSelection,
+      checked: showsSelection ? selected : null,
+      label:
+          option.label +
+          (option.description != null ? ', ${option.description}' : ''),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.small),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.small),
+          onTap: disabled ? null : onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.xs,
+              ),
+              child: Row(
+                children: [
+                  if (showsSelection) ...[
+                    Icon(
+                      selected
+                          ? Icons.check_box
+                          : Icons.check_box_outline_blank,
+                      size: 20,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                  ],
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(option.label, style: theme.textTheme.bodyMedium),
+                        if (option.description != null)
+                          Text(
+                            option.description!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

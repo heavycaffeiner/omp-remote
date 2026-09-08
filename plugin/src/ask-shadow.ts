@@ -8,7 +8,7 @@
 
 import type { AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import type { AskToolDetails, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import type { InteractiveRequest } from "./protocol-types.js";
+import type { InteractiveRequest, RequestAnswer } from "./protocol-types.js";
 import type { SessionBridge } from "./session-bridge.js";
 
 interface AskShadowOption {
@@ -73,6 +73,72 @@ function formatAnswerLine(result: RemoteQuestionResult): string {
 	return `${result.question}: ${result.selectedOptions.join(", ") || "(no selection)"}`;
 }
 
+/// The wire form of one question. `multi` travels so the client can offer
+/// several picks where the tool asked for several.
+function buildRequest(question: AskShadowQuestion): InteractiveRequest {
+	const request: InteractiveRequest = {
+		k: "select",
+		title: question.question,
+		message: question.header ?? "",
+		options: question.options.map((option) =>
+			option.description !== undefined
+				? { label: option.label, description: option.description }
+				: { label: option.label },
+		),
+	};
+	if (question.multi === true) request.multi = true;
+	return request;
+}
+
+/// Reads an answer against the question it was raised for. Returns undefined
+/// when the client answered with something the question cannot use, which is
+/// the same as not answering: the other path gets its turn.
+function selectionFrom(
+	question: AskShadowQuestion,
+	answer: RequestAnswer | undefined,
+): RemoteQuestionResult | undefined {
+	if (!answer) return undefined;
+	const labels: string[] = [];
+	if ("indexes" in answer) {
+		for (const index of answer.indexes) {
+			const option = question.options[index];
+			if (option) labels.push(option.label);
+		}
+	} else if ("index" in answer) {
+		const option = question.options[answer.index];
+		if (option) labels.push(option.label);
+	}
+	if (labels.length === 0) return undefined;
+	return {
+		id: question.id,
+		question: question.question,
+		options: question.options.map((option) => option.label),
+		multi: question.multi ?? false,
+		selectedOptions: labels,
+	};
+}
+
+/// One question answers in the shape the native tool uses for one; several
+/// answer as a list. Matching that keeps the model's view identical whether
+/// the phone or the terminal answered.
+function buildToolResult(results: RemoteQuestionResult[]): AgentToolResult<AskToolDetails> {
+	if (results.length === 1) {
+		const result = results[0] as RemoteQuestionResult;
+		const details: AskToolDetails = {
+			question: result.question,
+			options: result.options,
+			multi: result.multi,
+			selectedOptions: result.selectedOptions,
+		};
+		return { content: [{ type: "text", text: formatAnswerLine(result) }], details };
+	}
+	const details: AskToolDetails = { results };
+	return {
+		content: [{ type: "text", text: `User answers:\n${results.map(formatAnswerLine).join("\n")}` }],
+		details,
+	};
+}
+
 export function registerAskShadow(pi: ExtensionAPI, bridge: SessionBridge): void {
 	const optionSchema = pi.zod.object({
 		label: pi.zod.string(),
@@ -105,53 +171,68 @@ export function registerAskShadow(pi: ExtensionAPI, bridge: SessionBridge): void
 			_onUpdate: AgentToolUpdateCallback<AskToolDetails> | undefined,
 			ctx: ExtensionContext,
 		): Promise<AgentToolResult<AskToolDetails>> => {
-			const controlAttached = bridge.getCurrentState().viewers.control > 0;
-			if (!controlAttached) return delegateToNative(ctx, params, signal);
+			// Both paths run at once, and the first answer wins.
+			//
+			// Checking for an attached client first and delegating when there
+			// was none is what made a question unanswerable from a phone that
+			// arrived a moment later: no wire request was ever raised, so
+			// reconnecting found nothing to show. Raising it regardless means
+			// a client that attaches mid-question still sees the card, while
+			// the workstation's own picker keeps working exactly as before.
+			const raised = new Set<string>();
+			const nativeAbort = new AbortController();
+			const abortNative = () => nativeAbort.abort();
+			signal?.addEventListener("abort", abortNative, { once: true });
 
-			const results: RemoteQuestionResult[] = [];
-			for (const question of params.questions) {
-				if (signal?.aborted) return delegateToNative(ctx, params, signal);
+			const remote = (async (): Promise<AgentToolResult<AskToolDetails> | undefined> => {
+				const results: RemoteQuestionResult[] = [];
+				for (const question of params.questions) {
+					if (signal?.aborted) return undefined;
+					const handle = bridge.raiseRequest(buildRequest(question));
+					raised.add(handle.id);
+					const answer = signal ? await raceWithSignal(handle.answer, signal) : await handle.answer;
+					raised.delete(handle.id);
+					const picked = selectionFrom(question, answer);
+					if (!picked) return undefined;
+					results.push(picked);
+				}
+				return buildToolResult(results);
+			})();
 
-				const request: InteractiveRequest = {
-					k: "select",
-					title: question.question,
-					message: question.header ?? "",
-					options: question.options.map((option) =>
-						option.description !== undefined ? { label: option.label, description: option.description } : { label: option.label },
-					),
-				};
+			const native = (async (): Promise<AgentToolResult<AskToolDetails> | undefined> => {
+				try {
+					return await delegateToNative(ctx, params, nativeAbort.signal);
+				} catch {
+					// No picker here, or it was abandoned. The remote side is
+					// still waiting, so this is not the tool's outcome.
+					return undefined;
+				}
+			})();
 
-				const answerPromise = bridge.raiseRequest(request);
-				const answer = signal ? await raceWithSignal(answerPromise, signal) : await answerPromise;
-				if (answer === undefined) return delegateToNative(ctx, params, signal);
-				if (!("index" in answer)) return delegateToNative(ctx, params, signal);
+			const tagged = await Promise.race([
+				remote.then((result) => ({ via: "remote" as const, result })),
+				native.then((result) => ({ via: "native" as const, result })),
+			]);
 
-				const selected = question.options[answer.index];
-				if (!selected) return delegateToNative(ctx, params, signal);
-
-				results.push({
-					id: question.id,
-					question: question.question,
-					options: question.options.map((o) => o.label),
-					multi: question.multi ?? false,
-					selectedOptions: [selected.label],
-				});
+			// The loser is withdrawn so a card does not linger on a phone for
+			// a question the terminal already answered, and the reverse.
+			let outcome = tagged.result;
+			if (tagged.via === "remote" && outcome) {
+				nativeAbort.abort();
+			} else if (tagged.via === "native" && outcome) {
+				for (const id of raised) bridge.cancelRequest(id, "answered_locally");
+			} else {
+				// Whichever path settled first could not answer; the other one
+				// is the only remaining chance.
+				const other = tagged.via === "remote" ? native : remote;
+				outcome = await other;
 			}
 
-			if (results.length === 1) {
-				const result = results[0] as RemoteQuestionResult;
-				const details: AskToolDetails = {
-					question: result.question,
-					options: result.options,
-					multi: result.multi,
-					selectedOptions: result.selectedOptions,
-				};
-				return { content: [{ type: "text", text: formatAnswerLine(result) }], details };
+			signal?.removeEventListener("abort", abortNative);
+			if (!outcome) {
+				throw new Error("ask: neither the attached client nor the workstation answered");
 			}
-
-			const details: AskToolDetails = { results };
-			const responseText = `User answers:\n${results.map(formatAnswerLine).join("\n")}`;
-			return { content: [{ type: "text", text: responseText }], details };
+			return outcome;
 		},
 	});
 }

@@ -3,20 +3,21 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'panel_shell.dart';
 
-/// Prompts this phone sent while the agent was busy, still waiting for it.
+/// Prompts the workstation is holding for this session, still waiting for the
+/// agent.
 ///
 /// They sit in omp's own queue, which drains one message per agent step
-/// boundary, so each arrives mid-turn rather than after it. The extension API
-/// reports only whether that queue is non-empty, never its contents, so this
-/// lists what this client put there and nothing typed at the workstation.
-/// Editing a pending message is a workstation action for the same reason.
+/// boundary, so each arrives mid-turn rather than after it. The plugin keeps
+/// the list, so every attached client sees the same one; the queue's contents
+/// are not readable from an extension, so text typed at the workstation is
+/// not in it, and editing or dropping an entry is a workstation action.
 class QueuePanel extends StatefulWidget {
   const QueuePanel({required this.queued, required this.sent, super.key});
 
-  /// What the workstation reports: whether anything is pending at all.
+  /// What the workstation reports as waiting, whether or not it can name it.
   final int queued;
 
-  /// The prompts this client sent into that queue, oldest first.
+  /// The prompts it can name, oldest first.
   final List<String> sent;
 
   @override
@@ -35,12 +36,11 @@ class _QueuePanelState extends State<QueuePanel> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final sent = widget.sent;
-    // The count is what this client knows it sent. When the workstation says
-    // something is pending and this client sent nothing, the message came
-    // from the workstation itself, so the label says so instead of naming a
-    // number it cannot know.
+    // The workstation reports what is waiting, and names it when it can. A
+    // message typed at the workstation itself is counted but not listed,
+    // since the queue's contents are not readable from an extension.
     final label = sent.isEmpty
-        ? 'A message is waiting, sent from the workstation'
+        ? 'A message is waiting, typed at the workstation'
         : (sent.length == 1
               ? '1 message waiting to be delivered'
               : '${sent.length} messages waiting to be delivered');

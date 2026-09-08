@@ -3,6 +3,7 @@
 // use ValueListenableBuilder/AnimatedBuilder without extra dependencies.
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
@@ -83,7 +84,12 @@ class SessionStore extends ChangeNotifier {
   StreamSubscription<ServerFrame>? _subscription;
 
   final List<TranscriptEntry> _entries = [];
-  List<TranscriptEntry> get entries => List.unmodifiable(_entries);
+
+  /// A view, not a copy: the transcript view reads this on every frame, and
+  /// copying a replayed session's thousands of entries each time was pure
+  /// waste. Still unmodifiable, so no caller can mutate the list behind the
+  /// store's back.
+  List<TranscriptEntry> get entries => UnmodifiableListView(_entries);
 
   StateSnapshot? _state;
   StateSnapshot? get state => _state;
@@ -107,22 +113,6 @@ class SessionStore extends ChangeNotifier {
 
   LateAnswerError? lastLateAnswerError;
 
-  /// Prompts this client sent while the agent was busy, in the order they
-  /// were sent.
-  ///
-  /// omp owns the real queue and the extension API exposes only whether it
-  /// is non-empty, never its contents, so a client cannot read back what is
-  /// waiting. What it can do is remember what it put there and stop showing
-  /// it once the workstation reports the queue empty. Text typed at the
-  /// workstation never appears here, which is why the panel says whose it is.
-  final List<String> _sentQueue = [];
-  List<String> get sentQueue => List.unmodifiable(_sentQueue);
-
-  void noteQueuedPrompt(String text) {
-    _sentQueue.add(text);
-    _emit();
-  }
-
   int _lastAppliedSeq = 0;
   String? _openToolBlockId;
   bool _hasOpenTextBlock = false;
@@ -130,29 +120,47 @@ class SessionStore extends ChangeNotifier {
   /// Notified once per appended/updated entry list mutation (not per delta).
   final ValueNotifier<int> transcriptRevision = ValueNotifier<int>(0);
 
-  /// Rebuilds are throttled to one per frame budget. A subscribe replays a
-  /// whole session in one burst (hundreds of frames in a few milliseconds)
-  /// and a streaming turn arrives a delta at a time; notifying per frame
-  /// rebuilt the transcript hundreds of times and made connecting look slow
-  /// when the data had already arrived.
-  static const Duration _notifyWindow = Duration(milliseconds: 16);
+  /// Rebuilds are coalesced. A subscribe replays a whole session in one
+  /// burst and a streaming turn arrives a delta at a time; notifying per
+  /// frame rebuilt the transcript once per frame received.
+  ///
+  /// The window widens while frames keep arriving. A replayed session is
+  /// thousands of frames in a few hundred milliseconds, and rebuilding at
+  /// 60 Hz through that is thousands of rows laid out for intermediate
+  /// states nobody sees; one rebuild every [_burstWindow] shows the same
+  /// result. A quiet stream keeps the tight window, so a single message
+  /// still appears immediately.
+  static const Duration _idleWindow = Duration(milliseconds: 16);
+  static const Duration _burstWindow = Duration(milliseconds: 120);
+  static const int _burstThreshold = 12;
   Timer? _notifyTimer;
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
   bool _revisionPending = false;
+
+  /// Mutations coalesced into the notification now pending, and how many the
+  /// last one absorbed. The window is chosen from the last flush, because the
+  /// first mutation after one is always the only one counted so far: reading
+  /// the live counter meant the wide window never applied.
+  int _coalesced = 0;
+  int _lastBurstSize = 0;
 
   /// Coalesces a mutation into at most one listener notification per window,
   /// firing at once when the last one is already older than the window so a
   /// single change is never delayed.
   void _emit({bool transcriptChanged = false}) {
     if (transcriptChanged) _revisionPending = true;
+    _coalesced += 1;
     if (_notifyTimer != null) return;
+    final window = _lastBurstSize >= _burstThreshold
+        ? _burstWindow
+        : _idleWindow;
     final now = DateTime.now();
     final since = now.difference(_lastNotify);
-    if (since >= _notifyWindow) {
+    if (since >= window) {
       _flushNotify(now);
       return;
     }
-    _notifyTimer = Timer(_notifyWindow - since, () {
+    _notifyTimer = Timer(window - since, () {
       _notifyTimer = null;
       _flushNotify(DateTime.now());
     });
@@ -160,6 +168,8 @@ class SessionStore extends ChangeNotifier {
 
   void _flushNotify(DateTime at) {
     _lastNotify = at;
+    _lastBurstSize = _coalesced;
+    _coalesced = 0;
     if (_revisionPending) {
       _revisionPending = false;
       transcriptRevision.value++;
@@ -216,12 +226,6 @@ class SessionStore extends ChangeNotifier {
                 ),
               ),
             );
-        }
-        // omp reports presence, not contents. Once it says nothing is
-        // pending, whatever this client sent has been consumed, so the panel
-        // stops claiming otherwise. An idle agent also has no queue.
-        if (frame.state.queued == 0 && _sentQueue.isNotEmpty) {
-          _sentQueue.clear();
         }
         _emit();
       case RequestFrame():

@@ -461,11 +461,15 @@ Request object:
 
 | `k`        | Extra fields                                       | Answer shape            |
 | ---------- | -------------------------------------------------- | ----------------------- |
-| `select`   | `title`, `message`, `options[]`                    | `{ "index": 0 }`        |
+| `select`   | `title`, `message`, `options[]`, `multi?`          | `{ "index": 0 }` or `{ "indexes": [0, 2] }` |
 | `confirm`  | `title`, `message`                                 | `{ "confirmed": true }` |
 | `input`    | `title`, `message`, `placeholder`, `initial`       | `{ "value": "..." }`    |
 | `editor`   | `title`, `initial`, `language`                     | `{ "value": "..." }`    |
 | `approval` | `toolName`, `input`, `risk`                        | `{ "decision": "allow" \| "deny" \| "always" }` |
+
+A `select` with `multi` set takes several picks, answered with `indexes` in
+the order they were chosen. One `index` is still a valid answer to it, so a
+client that ignores `multi` stays correct rather than wrong.
 
 ### What the plugin can actually raise
 
@@ -473,9 +477,12 @@ The extension API bounds this, and the bound is not obvious, so it is stated
 here rather than discovered later.
 
 - **Its own tools and commands** raise any kind freely.
-- **`ask`** is covered by shadowing the built-in tool of that name. The plugin
-  registers its own `ask`, serves the questions remotely, and delegates to the
-  native tool when no control is attached or the remote answer times out.
+- **`ask`** is covered by shadowing the built-in tool of that name. The
+  plugin registers its own `ask`, raises the questions on the wire and runs
+  the workstation's own picker at the same time; the first answer wins and
+  the other is withdrawn. Both run because checking for an attached client
+  first left a question unanswerable from a phone that arrived a moment
+  later: no request had been raised, so reconnecting found nothing to show.
 - **`approval` is deny-only.** The extension surface that fires before a tool
   runs accepts a block decision and nothing else; the events that report an
   approval carry no channel to answer one. So `deny` genuinely stops the tool,
@@ -600,24 +607,24 @@ own UI.
 | `cmd`             | `args`                    | Reply `data`                 |
 | ----------------- | ------------------------- | ---------------------------- |
 | `new_session`     | `{}`                      | `{ started: true }`          |
-| `end_session`     | `{}`                      | `{ ended: true }`            |
 | `switch_session`  | `{ sessionFile }`         | `{ switched: true, sessionFile }` |
 | `list_sessions`   | `{ limit? }`              | `{ sessions }`               |
 | `branch`          | `{ entryId }`             | `{ sessionId }`              |
 | `compact`         | `{ instructions? }`       | `{ compacted: true }`        |
 | `set_session_name`| `{ name }`                | `{ sessionName }`            |
 
-`end_session` leaves the current session for a fresh one and deletes nothing:
-the transcript stays on disk and can be reopened at the workstation. It is
-not a process exit. `ctx.shutdown()` looked like the right call but is
-documented as a request the host may ignore, and it is ignored in both TUI
-and RPC mode, so a command built on it reported success and did nothing.
+`new_session` leaves the current session for a fresh one and deletes nothing:
+the transcript stays on disk and can be reopened at the workstation. That is
+also the closest thing to ending a session that a client can ask for. A
+graceful shutdown is not reachable: `ctx.shutdown()` is documented as a
+request the host may ignore, and it is ignored in both TUI and RPC mode, so a
+command built on it reported success and did nothing.
 
-`new_session`, `end_session`, and `switch_session` need
-`ExtensionCommandContext`, which only a slash-command handler receives. The
-plugin keeps the one `/remote` was last invoked with, and `/remote` is how a
-session gets paired, so it is present in practice; a client that paired some
-other way gets an error naming what to run.
+`new_session` and `switch_session` need `ExtensionCommandContext`, which only
+a slash-command handler receives. The plugin keeps the one `/remote` was last
+invoked with, and `/remote` is how a session gets paired, so it is present in
+practice; a client that paired some other way gets an error naming what to
+run.
 
 ### The prompt queue
 

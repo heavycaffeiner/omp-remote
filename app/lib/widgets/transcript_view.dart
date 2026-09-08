@@ -65,12 +65,21 @@ class _TranscriptViewState extends State<TranscriptView> {
     setState(() => _following = atBottom);
   }
 
+  /// Whether a tail pin is already scheduled for the next frame.
+  bool _pinScheduled = false;
+
   /// Re-pins the viewport to the bottom after the frame that changed its
   /// height. Sampling `_atBottom` before the rebuild is what keeps a user who
   /// scrolled up from being yanked back.
+  ///
+  /// At most one callback is outstanding: the last row calls this on every
+  /// build, and a replay builds it hundreds of times, each scheduling its own
+  /// jump to a bottom that had not moved.
   void _pinTail() {
-    if (!_following) return;
+    if (!_following || _pinScheduled) return;
+    _pinScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pinScheduled = false;
       if (!mounted || !_scroll.hasClients || !_following) return;
       final max = _scroll.position.maxScrollExtent;
       if (_scroll.position.pixels >= max) return;
@@ -102,30 +111,35 @@ class _TranscriptViewState extends State<TranscriptView> {
         if (entries.isEmpty) return const _EmptyTranscript();
         return Stack(
           children: [
-            ListView.separated(
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
-                AppSpacing.lg,
-              ),
-              itemCount: entries.length,
-              separatorBuilder: (context, index) => SizedBox(
-                // Consecutive rows from the same speaker keep a tighter gap
-                // so they read as one block.
-                height: _startsRun(entries, index + 1)
-                    ? _rowGap
-                    : AppSpacing.xs,
-              ),
-              itemBuilder: (context, index) => _TranscriptRow(
-                key: ValueKey(entries[index].id),
-                entry: entries[index],
-                showLabel: _labelsRun(entries, index),
-                cwd: widget.sessionStore.state?.cwd,
-                // A streaming delta only bumps its own row's revision, so the
-                // last row has to re-pin the tail itself as it grows taller.
-                onGrew: index == entries.length - 1 ? _pinTail : null,
+            // One selection region for the whole list instead of one per
+            // row: a per-row selectable markdown body is what made scrolling
+            // a replayed session cost hundreds of milliseconds per drag.
+            SelectionArea(
+              child: ListView.separated(
+                controller: _scroll,
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.sm,
+                  AppSpacing.md,
+                  AppSpacing.lg,
+                ),
+                itemCount: entries.length,
+                separatorBuilder: (context, index) => SizedBox(
+                  // Consecutive rows from the same speaker keep a tighter gap
+                  // so they read as one block.
+                  height: _startsRun(entries, index + 1)
+                      ? _rowGap
+                      : AppSpacing.xs,
+                ),
+                itemBuilder: (context, index) => _TranscriptRow(
+                  key: ValueKey(entries[index].id),
+                  entry: entries[index],
+                  showLabel: _labelsRun(entries, index),
+                  cwd: widget.sessionStore.state?.cwd,
+                  // A streaming delta only bumps its own row's revision, so
+                  // the last row has to re-pin the tail itself as it grows.
+                  onGrew: index == entries.length - 1 ? _pinTail : null,
+                ),
               ),
             ),
             if (!_following)
@@ -330,8 +344,13 @@ class _MessageRow extends StatelessWidget {
       ],
     );
 
+    // The label names the speaker only. The text itself is already exposed
+    // by the Text and markdown children below, so repeating it here both
+    // duplicated what a screen reader announces and rebuilt a copy of every
+    // message on every frame the row was built.
     return Semantics(
-      label: '$label${entry.open ? ", streaming" : ""}: ${entry.text}',
+      container: true,
+      label: '$label${entry.open ? ", streaming" : ""}',
       child: boxed
           ? Container(
               width: double.infinity,
@@ -428,7 +447,25 @@ class _CodeBlock extends StatelessWidget {
 /// usually a JSON document. Printing that verbatim fills the header with
 /// quotes and braces, so it is decoded and reduced to the one value that
 /// actually identifies the call.
+///
+/// Memoized on the raw string, which is what a tool call carries: the decode
+/// otherwise ran again every time a card scrolled back into view.
+final Map<String, String> _summaryCache = {};
+const int _summaryCacheMax = 512;
+
 String _summarizeToolInput(Object? input) {
+  if (input is String) {
+    final cached = _summaryCache[input];
+    if (cached != null) return cached;
+    final summary = _summarizeToolInputUncached(input);
+    if (_summaryCache.length >= _summaryCacheMax) _summaryCache.clear();
+    _summaryCache[input] = summary;
+    return summary;
+  }
+  return _summarizeToolInputUncached(input);
+}
+
+String _summarizeToolInputUncached(Object? input) {
   if (input == null) return '';
   if (input is String) {
     final trimmed = input.trim();
@@ -523,7 +560,19 @@ final RegExp _taggedBlock = RegExp(
   multiLine: true,
 );
 
+/// Splits [text] into prose and tagged blocks, memoized on the text.
+///
+/// A lazy list rebuilds a row every time it scrolls back into view, and this
+/// regex walks the whole message each time. The result depends only on the
+/// text, so it is cached: a streaming row's text changes and takes a fresh
+/// entry, while a settled one is split once for the life of the screen.
+final Map<String, List<_Segment>> _splitCache = {};
+const int _splitCacheMax = 512;
+
 List<_Segment> _splitTagged(String text) {
+  final cached = _splitCache[text];
+  if (cached != null) return cached;
+
   final segments = <_Segment>[];
   var cursor = 0;
   for (final match in _taggedBlock.allMatches(text)) {
@@ -539,6 +588,11 @@ List<_Segment> _splitTagged(String text) {
   if (rest.isNotEmpty || segments.isEmpty) {
     segments.add(_Segment(text: segments.isEmpty ? text : rest));
   }
+
+  // Bounded: a streaming turn adds one key per delta, so without a ceiling
+  // this would grow with the session rather than with what is on screen.
+  if (_splitCache.length >= _splitCacheMax) _splitCache.clear();
+  _splitCache[text] = segments;
   return segments;
 }
 
@@ -795,27 +849,24 @@ class _ToolCardState extends State<_ToolCard> {
     // most of a phone's width on a prefix every row shares, and then
     // ellipsized the filename, which is the part that identifies the call.
     final path = _relativeToCwd(entry.path, widget.cwd);
-    // A finished call whose whole output is one short line says more with the
-    // result than with its arguments: `ask` collapsed to the word
-    // "questions", hiding the answer that was the point of asking.
+    // A call with no path to name, whose whole output is one short line, says
+    // more with the result than with its arguments: `ask` collapsed to the
+    // word "questions" and hid the answer that was the point of asking. It
+    // never displaces the path, which is what identifies a file edit, and it
+    // never displaces an argument summary that is longer than the result.
     final result = entry.text.trim();
-    final oneLineResult =
+    final argumentSummary =
+        _relativeToCwd(_summarizeToolInput(entry.toolInput), widget.cwd) ?? '';
+    final resultInstead =
         !entry.open &&
-            entry.toolOk != false &&
-            result.isNotEmpty &&
-            !result.contains('\n') &&
-            result.length <= 80
-        ? result
-        : null;
-    final summary =
-        oneLineResult ??
-        ((path != null && path.isNotEmpty)
-            ? path
-            : _relativeToCwd(
-                    _summarizeToolInput(entry.toolInput),
-                    widget.cwd,
-                  ) ??
-                  '');
+        entry.toolOk != false &&
+        result.isNotEmpty &&
+        !result.contains('\n') &&
+        result.length <= 80 &&
+        argumentSummary.length <= result.length;
+    final summary = (path != null && path.isNotEmpty)
+        ? path
+        : (resultInstead ? result : argumentSummary);
     final statusLabel = entry.open
         ? 'running'
         : (entry.toolOk == false ? 'failed' : 'done');

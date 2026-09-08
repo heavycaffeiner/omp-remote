@@ -210,13 +210,14 @@ export default function ompRemote(pi: ExtensionAPI): void {
 			// hung phone with nobody watching must never stall the session.
 			if (bridge.getCurrentState().viewers.control <= 0) return undefined;
 
-			const answer = await bridge.raiseRequest({
+			const { answer: pending } = bridge.raiseRequest({
 				k: "approval",
 				toolName: event.toolName,
 				input: truncateText(safeStringifyInput(event.input), TOOL_INPUT_MAX_BYTES),
 				risk: toolRisk(event.toolName),
 				timeout: APPROVAL_TIMEOUT_MS,
 			});
+			const answer = await pending;
 			// A timeout or cancellation resolves to undefined: fall through to
 			// the local default, same as "allow".
 			if (!answer || !("decision" in answer)) return undefined;

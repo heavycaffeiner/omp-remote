@@ -53,17 +53,22 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
     }
   }
 
-  /// Ends this session: omp shuts down gracefully and the transcript stays on
-  /// disk, so it can be reopened later. Nothing is deleted, which is what the
-  /// dialog promises and what `end_session` does.
-  Future<void> _confirmEnd() async {
+  /// Leaves this session for a fresh one, which is what "new session" means
+  /// here: the agent stops working on the old one and its transcript stays on
+  /// disk to be reopened at the workstation.
+  ///
+  /// Confirmed because it is not what a mis-tap should do. There is no
+  /// separate "end" action: a graceful shutdown is not reachable from an
+  /// extension, and a second button doing exactly this would be a relabelled
+  /// duplicate.
+  Future<void> _confirmNewSession() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('End this session?'),
+        title: const Text('Start a new session?'),
         content: const Text(
-          'The agent stops working on it and a fresh session takes its place. '
-          'The conversation stays saved on the workstation and can be '
+          'The agent stops working on this one and a fresh session takes its '
+          'place. This conversation stays saved on the workstation and can be '
           'reopened there; nothing is deleted.',
         ),
         actions: [
@@ -73,15 +78,15 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('End session'),
+            child: const Text('New session'),
           ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
     await _run(
-      () => widget.relayClient.sendCommand(CommandName.endSession),
-      successMessage: 'Session ended',
+      () => widget.relayClient.sendCommand(CommandName.newSession),
+      successMessage: 'New session started',
     );
   }
 
@@ -190,28 +195,11 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
             const SizedBox(height: AppSpacing.sm),
             Semantics(
               button: true,
-              label: 'Start new session',
+              label: 'Start a new session, ending this one',
               child: OutlinedButton.icon(
-                onPressed: disabled
-                    ? null
-                    : () => _run(
-                        () => widget.relayClient.sendCommand(
-                          CommandName.newSession,
-                        ),
-                        successMessage: 'New session started',
-                      ),
+                onPressed: disabled ? null : _confirmNewSession,
                 icon: const Icon(Icons.add_box_outlined),
                 label: const Text('New session'),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Semantics(
-              button: true,
-              label: 'End this session',
-              child: OutlinedButton.icon(
-                onPressed: disabled ? null : _confirmEnd,
-                icon: const Icon(Icons.logout),
-                label: const Text('End session'),
               ),
             ),
             if (state?.todos != null && state!.todos!.isNotEmpty) ...[

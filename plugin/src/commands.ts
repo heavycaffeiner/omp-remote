@@ -11,6 +11,7 @@ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
 import { BTW_TASK, OMFG_TASK, runSideTask, type SideTask } from "./btw.js";
 import { listModelRoles, setModelRole } from "./model-roles.js";
+import { thinkingLevelsFor } from "./normalize.js";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
 
@@ -151,8 +152,6 @@ async function dispatch(
 
 		case "new_session":
 			return cmdNewSession(bridge);
-		case "end_session":
-			return cmdEndSession(bridge);
 		case "switch_session":
 			return cmdSwitchSession(bridge, args);
 		case "list_sessions":
@@ -255,9 +254,16 @@ function cmdPrompt(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): Comm
 	// it, and it sits in the queue the workstation renders and can edit until
 	// then. `aside` arrives at the same boundary but never enters that queue,
 	// which left a queued message invisible on both screens.
-	const effective = deliverAs ?? (ctx.isIdle() ? undefined : ("steer" as const));
+	const queueing = !ctx.isIdle();
+	const effective = deliverAs ?? (queueing ? ("steer" as const) : undefined);
 	pi.sendUserMessage(text, effective !== undefined ? { deliverAs: effective } : undefined);
-	return ok({ accepted: true });
+	if (queueing) {
+		// State is otherwise only rebuilt at turn boundaries, so a queued
+		// message would go unreported for as long as the turn runs: exactly
+		// the window in which a client needs to see it.
+		bridge.noteForwardedPrompt(text);
+	}
+	return ok({ accepted: true, queued: queueing });
 }
 
 /// Runs one of the two side tasks in its own session.
@@ -446,19 +452,6 @@ const APP_COMMANDS: Array<{ name: string; description: string; remote: string }>
 
 function cmdCommands(): CommandResult {
 	return ok({ commands: APP_COMMANDS.map((entry) => ({ ...entry, source: "builtin" })) });
-}
-
-/// The thinking levels a model accepts, in the order a picker should show
-/// them. The catalog lists provider efforts; `inherit` and `off` are
-/// agent-local selectors that exist for every model, so they are prepended
-/// rather than expected in the catalog's list.
-///
-/// Undefined when the model has no controllable effort surface: a client
-/// should disable the control rather than offer a list nothing accepts.
-function thinkingLevelsFor(model: Model): string[] | undefined {
-	const efforts = model.thinking?.efforts;
-	if (!efforts || efforts.length === 0) return undefined;
-	return ["inherit", "off", ...efforts];
 }
 
 // Every authenticated model, with enough of each row for a phone to choose
@@ -656,7 +649,7 @@ async function cmdNewSession(bridge: SessionBridge): Promise<CommandResult> {
 	const ctx = bridge.getCommandCtx();
 	if (!ctx) {
 		return fail(
-			"starting a new session needs a command context, which only a slash command carries: run /remote once at the workstation, or use end_session to close this one",
+			"starting a new session needs a command context, which only a slash command carries: run /remote once at the workstation first",
 		);
 	}
 	const outcome = await ctx.newSession();
@@ -677,25 +670,6 @@ async function cmdSwitchSession(bridge: SessionBridge, args: unknown): Promise<C
 	const outcome = await ctx.switchSession(sessionFile);
 	if (outcome.cancelled) return fail("the workstation cancelled the switch");
 	return ok({ switched: true, sessionFile });
-}
-
-// Ends this session by leaving it for a fresh one, which is the only route
-// that works: `ctx.shutdown()` is documented as a request, and the host
-// honours it in neither TUI nor RPC mode, so a command built on it returned
-// success and did nothing.
-//
-// The transcript is untouched on disk either way, so ending is reversible by
-// reopening it at the workstation.
-async function cmdEndSession(bridge: SessionBridge): Promise<CommandResult> {
-	const ctx = bridge.getCommandCtx();
-	if (!ctx) {
-		return fail(
-			"ending a session needs a command context, which only a slash command carries: run /remote once at the workstation first",
-		);
-	}
-	const outcome = await ctx.newSession();
-	if (outcome.cancelled) return fail("the workstation cancelled ending the session");
-	return ok({ ended: true });
 }
 
 interface SessionSummary {

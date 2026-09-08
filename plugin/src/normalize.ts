@@ -32,6 +32,21 @@ export function modelToRef(model: Model | undefined): ModelRef | undefined {
 	return { provider: model.provider, id: model.id };
 }
 
+// The thinking levels a model accepts, in the order a picker should show
+// them. The catalog lists provider efforts; `inherit` and `off` are
+// agent-local selectors that exist for every model, so they are prepended
+// rather than expected in the catalog's list.
+//
+// Undefined when the model has no controllable effort surface, which a
+// client should render as a disabled control rather than a full list. One
+// function because the model list and the state snapshot both report this
+// and must not drift.
+export function thinkingLevelsFor(model: Model | undefined): string[] | undefined {
+	const efforts = model?.thinking?.efforts;
+	if (!efforts || efforts.length === 0) return undefined;
+	return ["inherit", "off", ...efforts];
+}
+
 // Extracts the visible text and thinking strings from a settled AgentMessage
 // for the `message` event kind. Non-text/thinking content (tool calls, images)
 // is ignored; the wire event only carries prose.

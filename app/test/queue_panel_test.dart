@@ -47,7 +47,7 @@ void main() {
     // the wire reports presence, not contents.
     await _pump(tester, queued: 1, sent: const []);
     expect(
-      find.text('A message is waiting, sent from the workstation'),
+      find.text('A message is waiting, typed at the workstation'),
       findsOneWidget,
     );
   });

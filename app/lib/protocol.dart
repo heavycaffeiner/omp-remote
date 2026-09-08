@@ -304,6 +304,7 @@ sealed class InteractiveRequest {
           title: asString(map['title']) ?? '',
           message: asString(map['message']) ?? '',
           options: options,
+          multi: asBool(map['multi']) ?? false,
           timeoutMs: timeoutMs,
         );
       case 'confirm':
@@ -345,12 +346,17 @@ class SelectRequest extends InteractiveRequest {
     required this.title,
     required this.message,
     required this.options,
+    this.multi = false,
     super.timeoutMs,
   });
 
   final String title;
   final String message;
   final List<SelectOption> options;
+
+  /// Whether the question takes several picks. Answering one index is still
+  /// valid, so an older client stays correct on a multi question.
+  final bool multi;
 }
 
 class ConfirmRequest extends InteractiveRequest {
@@ -413,6 +419,12 @@ class UnknownRequest extends InteractiveRequest {
 
 Map<String, Object?> selectResponse(int index) => {'index': index};
 
+/// Answer to a `multi` select. Indexes are in the order the user picked them,
+/// which is the order the agent reads them back.
+Map<String, Object?> multiSelectResponse(List<int> indexes) => {
+  'indexes': indexes,
+};
+
 Map<String, Object?> confirmResponse(bool confirmed) => {
   'confirmed': confirmed,
 };
@@ -462,6 +474,7 @@ class StateSnapshot {
     this.model,
     this.thinkingLevel,
     this.thinkingLevels,
+    this.queue,
     required this.streaming,
     required this.compacting,
     required this.queued,
@@ -476,6 +489,12 @@ class StateSnapshot {
   });
 
   final String? sessionId;
+
+  /// The prompts the workstation is holding for this session, oldest first.
+  /// The plugin owns this list, so every attached client sees the same one;
+  /// text typed at the workstation is not in it, because the queue's
+  /// contents are not readable from an extension.
+  final List<String>? queue;
   final String? sessionName;
   final String? sessionFile;
   final String? cwd;
@@ -512,6 +531,9 @@ class StateSnapshot {
               for (final entry in asList(map['thinkingLevels']))
                 ?asString(entry),
             ]
+          : null,
+      queue: map.containsKey('queue')
+          ? [for (final entry in asList(map['queue'])) ?asString(entry)]
           : null,
       streaming: asBool(map['streaming']) ?? false,
       compacting: asBool(map['compacting']) ?? false,
@@ -828,7 +850,6 @@ enum CommandName {
   setActiveTools,
   setTodos,
   newSession,
-  endSession,
   switchSession,
   listSessions,
   branch,
@@ -887,8 +908,6 @@ extension CommandNameWire on CommandName {
         return 'set_todos';
       case CommandName.newSession:
         return 'new_session';
-      case CommandName.endSession:
-        return 'end_session';
       case CommandName.switchSession:
         return 'switch_session';
       case CommandName.listSessions:
