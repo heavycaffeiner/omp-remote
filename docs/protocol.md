@@ -536,7 +536,7 @@ at 4 entries and 4 MiB each.
 `models` lists every authenticated model as
 `{ provider, id, name, reasoning, contextWindow, image, thinking }`: a client
 choosing between two rows needs more than an id that is really a date stamp.
-`thinking` is the levels that model accepts, absent when it has no
+`thinking` is the levels that model accepts, empty when it has no
 controllable effort surface.
 
 ### Changing session settings
@@ -557,9 +557,11 @@ controllable effort surface.
 `level` is one of the values `models` reports for the model in use, plus
 `inherit` and `off`, which every model accepts. The set differs per model:
 `xhigh` exists on some and not others, and a model with no controllable
-effort surface reports none at all, which a client should render as a
-disabled control rather than a full list. `state.thinkingLevels` carries the
-current model's set so a client does not have to re-read the model list.
+effort surface reports an empty list, which a client should render as a
+disabled control. An empty list and an absent field mean different things:
+empty is the workstation saying this model takes no effort setting, absent
+is it not having said yet. `state.thinkingLevels` carries the current
+model's set so a client does not have to re-read the model list.
 Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 `immediate` or `wait`.
 

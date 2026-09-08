@@ -73,6 +73,15 @@ function formatAnswerLine(result: RemoteQuestionResult): string {
 	return `${result.question}: ${result.selectedOptions.join(", ") || "(no selection)"}`;
 }
 
+/// How long a question waits on the wire before it gives up.
+///
+/// Both answer paths can fail to produce one: no client ever attaches, and
+/// the workstation has no picker (an RPC host raises instead of prompting).
+/// Without a bound the tool would then wait forever, which is worse than the
+/// delegation it replaced, so the request expires and the call reports that
+/// nobody answered.
+const ASK_TIMEOUT_MS = 10 * 60 * 1000;
+
 /// The wire form of one question. `multi` travels so the client can offer
 /// several picks where the tool asked for several.
 function buildRequest(question: AskShadowQuestion): InteractiveRequest {
@@ -85,6 +94,7 @@ function buildRequest(question: AskShadowQuestion): InteractiveRequest {
 				? { label: option.label, description: option.description }
 				: { label: option.label },
 		),
+		timeout: ASK_TIMEOUT_MS,
 	};
 	if (question.multi === true) request.multi = true;
 	return request;
@@ -190,8 +200,17 @@ export function registerAskShadow(pi: ExtensionAPI, bridge: SessionBridge): void
 					if (signal?.aborted) return undefined;
 					const handle = bridge.raiseRequest(buildRequest(question));
 					raised.add(handle.id);
-					const answer = signal ? await raceWithSignal(handle.answer, signal) : await handle.answer;
+					// Two deadlines, because the bridge's own timer needs a
+					// live context and this one must hold regardless: an ask
+					// nobody can answer has to end, or the turn waits forever.
+					const answer = await Promise.race([
+						signal ? raceWithSignal(handle.answer, signal) : handle.answer,
+						new Promise<undefined>((resolve) => {
+							setTimeout(() => resolve(undefined), ASK_TIMEOUT_MS).unref?.();
+						}),
+					]);
 					raised.delete(handle.id);
+					if (answer === undefined) bridge.cancelRequest(handle.id, "timed_out");
 					const picked = selectionFrom(question, answer);
 					if (!picked) return undefined;
 					results.push(picked);

@@ -283,9 +283,13 @@ export class SessionBridge {
 		if (modelRef !== undefined) snapshot.model = modelRef;
 		if (thinkingLevel !== undefined) snapshot.thinkingLevel = thinkingLevel;
 		// Which levels this model accepts, so a client offers exactly those:
-		// `high` and `xhigh` exist on some models and not others.
-		const levels = thinkingLevelsFor(ctx?.model);
-		if (levels !== undefined) snapshot.thinkingLevels = levels;
+		// `high` and `xhigh` exist on some models and not others. An empty
+		// list is the answer for a model with no effort surface at all, and
+		// omitting the key instead left a client unable to tell that apart
+		// from a session that has not reported yet.
+		if (ctx?.model !== undefined) {
+			snapshot.thinkingLevels = thinkingLevelsFor(ctx.model) ?? [];
+		}
 		if (this.forwarded.length > 0) snapshot.queue = [...this.forwarded];
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;

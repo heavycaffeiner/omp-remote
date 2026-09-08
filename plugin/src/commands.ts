@@ -471,8 +471,9 @@ function cmdModels(bridge: SessionBridge): CommandResult {
 		image: m.input.includes("image"),
 		// What this model actually accepts. `high` exists on some models and
 		// not others, so a fixed list offered levels that would be rejected
-		// or silently clamped. Absent means no effort control at all.
-		thinking: thinkingLevelsFor(m),
+		// or silently clamped. An empty list means no effort control at all,
+		// which a client has to be able to tell from "not reported".
+		thinking: thinkingLevelsFor(m) ?? [],
 	}));
 	const current = ctx.models.current();
 	return ok({

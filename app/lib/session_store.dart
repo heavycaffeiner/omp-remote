@@ -85,10 +85,10 @@ class SessionStore extends ChangeNotifier {
 
   final List<TranscriptEntry> _entries = [];
 
-  /// A view, not a copy: the transcript view reads this on every frame, and
-  /// copying a replayed session's thousands of entries each time was pure
-  /// waste. Still unmodifiable, so no caller can mutate the list behind the
-  /// store's back.
+  /// A view, not a copy. Read on every frame, so copying the whole list each
+  /// time buys nothing; it does not show up in a scroll benchmark either, it
+  /// is just the cheaper of two equally short lines. Unmodifiable both ways,
+  /// so no caller can mutate the list behind the store's back.
   List<TranscriptEntry> get entries => UnmodifiableListView(_entries);
 
   StateSnapshot? _state;
@@ -120,16 +120,15 @@ class SessionStore extends ChangeNotifier {
   /// Notified once per appended/updated entry list mutation (not per delta).
   final ValueNotifier<int> transcriptRevision = ValueNotifier<int>(0);
 
-  /// Rebuilds are coalesced. A subscribe replays a whole session in one
-  /// burst and a streaming turn arrives a delta at a time; notifying per
-  /// frame rebuilt the transcript once per frame received.
+  /// Rebuilds of the whole list are coalesced. A subscribe replays a session
+  /// in one burst, and notifying per frame rebuilt the transcript once per
+  /// frame received: 2000 applied frames produced 2000 rebuilds, and now
+  /// produce two.
   ///
-  /// The window widens while frames keep arriving. A replayed session is
-  /// thousands of frames in a few hundred milliseconds, and rebuilding at
-  /// 60 Hz through that is thousands of rows laid out for intermediate
-  /// states nobody sees; one rebuild every [_burstWindow] shows the same
-  /// result. A quiet stream keeps the tight window, so a single message
-  /// still appears immediately.
+  /// The window widens while frames keep arriving and returns to the tight
+  /// one when they stop, so a single message still appears immediately.
+  /// Streaming text is not affected: a delta bumps its own row's revision,
+  /// which is unthrottled, so live output still paints per delta.
   static const Duration _idleWindow = Duration(milliseconds: 16);
   static const Duration _burstWindow = Duration(milliseconds: 120);
   static const int _burstThreshold = 12;

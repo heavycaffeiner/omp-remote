@@ -74,7 +74,8 @@ class _TranscriptViewState extends State<TranscriptView> {
   ///
   /// At most one callback is outstanding: the last row calls this on every
   /// build, and a replay builds it hundreds of times, each scheduling its own
-  /// jump to a bottom that had not moved.
+  /// jump to a bottom that had not moved. Worth 24ms against 30ms for ten
+  /// drags over a replayed session.
   void _pinTail() {
     if (!_following || _pinScheduled) return;
     _pinScheduled = true;
@@ -447,25 +448,7 @@ class _CodeBlock extends StatelessWidget {
 /// usually a JSON document. Printing that verbatim fills the header with
 /// quotes and braces, so it is decoded and reduced to the one value that
 /// actually identifies the call.
-///
-/// Memoized on the raw string, which is what a tool call carries: the decode
-/// otherwise ran again every time a card scrolled back into view.
-final Map<String, String> _summaryCache = {};
-const int _summaryCacheMax = 512;
-
 String _summarizeToolInput(Object? input) {
-  if (input is String) {
-    final cached = _summaryCache[input];
-    if (cached != null) return cached;
-    final summary = _summarizeToolInputUncached(input);
-    if (_summaryCache.length >= _summaryCacheMax) _summaryCache.clear();
-    _summaryCache[input] = summary;
-    return summary;
-  }
-  return _summarizeToolInputUncached(input);
-}
-
-String _summarizeToolInputUncached(Object? input) {
   if (input == null) return '';
   if (input is String) {
     final trimmed = input.trim();
@@ -560,19 +543,7 @@ final RegExp _taggedBlock = RegExp(
   multiLine: true,
 );
 
-/// Splits [text] into prose and tagged blocks, memoized on the text.
-///
-/// A lazy list rebuilds a row every time it scrolls back into view, and this
-/// regex walks the whole message each time. The result depends only on the
-/// text, so it is cached: a streaming row's text changes and takes a fresh
-/// entry, while a settled one is split once for the life of the screen.
-final Map<String, List<_Segment>> _splitCache = {};
-const int _splitCacheMax = 512;
-
 List<_Segment> _splitTagged(String text) {
-  final cached = _splitCache[text];
-  if (cached != null) return cached;
-
   final segments = <_Segment>[];
   var cursor = 0;
   for (final match in _taggedBlock.allMatches(text)) {
@@ -588,11 +559,6 @@ List<_Segment> _splitTagged(String text) {
   if (rest.isNotEmpty || segments.isEmpty) {
     segments.add(_Segment(text: segments.isEmpty ? text : rest));
   }
-
-  // Bounded: a streaming turn adds one key per delta, so without a ceiling
-  // this would grow with the session rather than with what is on screen.
-  if (_splitCache.length >= _splitCacheMax) _splitCache.clear();
-  _splitCache[text] = segments;
   return segments;
 }
 
