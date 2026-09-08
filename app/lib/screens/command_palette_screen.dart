@@ -145,27 +145,74 @@ class _CommandReferenceScreenState extends State<CommandReferenceScreen> {
                             button: runnable,
                             label: '$label. From ${command.source}. $where',
                             child: ListTile(
-                              leading: Icon(_iconFor(command.source)),
-                              title: Text('/${command.name}'),
+                              dense: true,
+                              leading: Icon(_iconFor(command.source), size: 20),
+                              title: Text(
+                                '/${command.name}',
+                                style: monospaceStyle(
+                                  context,
+                                  fontSize: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.fontSize,
+                                ),
+                              ),
                               subtitle: command.description != null
-                                  ? Text(command.description!)
+                                  ? Text(
+                                      command.description!,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    )
                                   : null,
-                              trailing: runnable
-                                  ? const Icon(Icons.play_circle_outline)
-                                  : Text(
-                                      command.source,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.labelSmall?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: AppSpacing.sm,
+                                      vertical: AppSpacing.xxs,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHigh,
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadius.small,
                                       ),
                                     ),
+                                    child: Text(
+                                      command.source,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall,
+                                    ),
+                                  ),
+                                  const SizedBox(width: AppSpacing.xs),
+                                  runnable
+                                      ? const Icon(
+                                          Icons.play_circle_outline,
+                                          size: 18,
+                                        )
+                                      : Text(
+                                          'Workstation only',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                        ),
+                                ],
+                              ),
                               onTap: runnable
-                                  ? () => Navigator.of(
-                                      context,
-                                    ).pop(command.remote)
+                                  ? () =>
+                                        Navigator.of(context)
+                                            .pop(command.remote)
                                   : null,
                             ),
                           );

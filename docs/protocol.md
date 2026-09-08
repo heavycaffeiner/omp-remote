@@ -579,7 +579,7 @@ reachable from an extension.
 
 `bash` is a remote shell on the workstation. It runs only for a `control`
 connection and is refused when the plugin is started with
-`OMP_REMOTE_ALLOW_BASH=0`, which is the default. Turning it on is a deliberate
+the `allowBash` setting, off by default. Turning it on is a deliberate
 decision to let whoever holds the control token run commands on the machine.
 
 ### Errors

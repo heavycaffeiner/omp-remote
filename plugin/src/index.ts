@@ -3,7 +3,8 @@
 // session_start, stop on session_shutdown.
 
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "@oh-my-pi/pi-coding-agent";
-import { ConfigError, readRemoteConfig, type RemoteConfig } from "./config.js";
+import { configFromSettings, type RemoteConfig } from "./config.js";
+import { loadSettings, saveSettings, type StoredSettings } from "./settings.js";
 import { SessionBridge } from "./session-bridge.js";
 import { RelayClient } from "./relay-client.js";
 import { LocalServer } from "./local-server.js";
@@ -35,34 +36,29 @@ export default function ompRemote(pi: ExtensionAPI): void {
 	if (loaded) return;
 	loaded = true;
 
-	let config: RemoteConfig;
-	try {
-		config = readRemoteConfig();
-	} catch (err) {
-		if (!(err instanceof ConfigError)) throw err;
-		// Report once through ctx.ui.notify on session_start and leave the
-		// extension dormant rather than spamming or throwing at load time.
-		let notified = false;
-		pi.on("session_start", async (_event, ctx) => {
-			if (notified) return;
-			notified = true;
-			ctx.ui.notify(`omp-remote: ${err.message}`, "error");
-		});
-		return;
-	}
-
-	if (!config.relay && !config.local) {
-		// No relay URL and local disabled: load and stay dormant, no error.
-		return;
-	}
+	// Settings live in a file, not the environment, so a bad value degrades to
+	// the default rather than failing the session. The default is direct
+	// serving with no relay, which needs no configuration at all.
+	let settings = loadSettings();
+	let config = configFromSettings(settings);
 
 	const bridge = new SessionBridge(pi, config);
 	bridge.registerHandlers();
 	registerAskShadow(pi, bridge);
 
-	const relayClient = config.relay ? new RelayClient(bridge, config, pi) : undefined;
+	// Rebuilt whenever the relay is configured or cleared, so a change takes
+	// effect without restarting omp.
+	let relayClient: RelayClient | undefined;
 	const localServer = config.local ? new LocalServer(bridge, config, pi) : undefined;
 	const alwaysApprovedTools = new Set<string>();
+
+	const applyRelay = (): void => {
+		relayClient?.stop();
+		relayClient = undefined;
+		if (!config.relay) return;
+		relayClient = new RelayClient(bridge, config, pi);
+		relayClient.start();
+	};
 
 	// One port serves the whole workstation: the first session to bind it hosts
 	// every other, and a session that cannot bind joins the host as a guest
@@ -141,7 +137,7 @@ export default function ompRemote(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		try {
-			relayClient?.start();
+			applyRelay();
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			bridge.recordError(`relay: ${message}`);
@@ -155,7 +151,23 @@ export default function ompRemote(pi: ExtensionAPI): void {
 		}
 	});
 
-	registerRemoteOmpCommand(pi, bridge, config, () => (localStarted ? localServer : undefined));
+	// `/remote-omp config` hands back the settings it wants persisted. Saving
+	// and re-deriving the config here keeps the file the single source of
+	// truth, and the relay is rebuilt so the change takes effect at once.
+	const updateSettings = (next: StoredSettings): void => {
+		saveSettings(next);
+		settings = next;
+		config = configFromSettings(settings);
+		applyRelay();
+	};
+
+	registerRemoteOmpCommand(pi, bridge, {
+		getConfig: () => config,
+		getSettings: () => settings,
+		updateSettings,
+		getLocalServer: () => (localStarted ? localServer : undefined),
+		relayConnected: () => relayClient?.connected ?? false,
+	});
 
 	pi.registerCommand("remote", {
 		description: "Show omp-remote transport status",
@@ -166,7 +178,7 @@ export default function ompRemote(pi: ExtensionAPI): void {
 				const relayHost = new URL(config.relay.url).host;
 				lines.push(`relay: ${relayHost} (${relayClient?.connected ? "connected" : "disconnected"})`);
 			} else {
-				lines.push("relay: not configured");
+				lines.push("relay: not configured, direct only (/remote-omp config relay <url> <token>)");
 			}
 
 			if (!config.local) {

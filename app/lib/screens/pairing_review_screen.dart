@@ -4,6 +4,7 @@ import '../pairing.dart';
 import '../profile_store.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
+import '../theme.dart';
 import 'session_screen.dart';
 
 /// Shows the parsed pairing payload for confirmation before saving and
@@ -83,14 +84,14 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
       appBar: AppBar(title: const Text('Confirm pairing')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: [
             _InfoRow(label: 'Transport', value: transport),
             _InfoRow(label: 'URL', value: payload.url.toString()),
             _InfoRow(label: 'Role', value: roleLabel),
             _InfoRow(label: 'Session', value: payload.agentId),
             const _InfoRow(label: 'Token', value: 'Received (hidden)'),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             TextField(
               controller: _labelController,
               decoration: const InputDecoration(
@@ -99,14 +100,31 @@ class _PairingReviewScreenState extends State<PairingReviewScreen> {
               textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.done,
             ),
-            const SizedBox(height: 24),
-            Semantics(
-              button: true,
-              label: 'Save this connection and connect',
-              child: ElevatedButton(
-                onPressed: _saveAndConnect,
-                child: const Text('Save and connect'),
-              ),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    button: true,
+                    label: 'Cancel pairing',
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Semantics(
+                    button: true,
+                    label: 'Save this connection and connect',
+                    child: FilledButton(
+                      onPressed: _saveAndConnect,
+                      child: const Text('Save and connect'),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -125,12 +143,23 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: theme.textTheme.labelLarge),
-          Text(value),
+          SizedBox(
+            width: 88,
+            child: Text(label, style: theme.textTheme.labelSmall),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              value,
+              style: theme.textTheme.bodyMedium,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ),
         ],
       ),
     );

@@ -6,6 +6,7 @@ import '../discovery/pairing_code.dart';
 import '../pairing.dart';
 import '../profile_store.dart';
 import '../relay_client.dart';
+import '../theme.dart';
 import 'session_screen.dart';
 
 /// Redeems a six-character pairing code (docs/protocol.md, "Pairing
@@ -160,20 +161,21 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
       appBar: AppBar(title: const Text('Enter a code')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: [
-            const Text(
+            Text(
               'Type the address and the six-character code shown by '
               '/remote-omp on your workstation. The code decides which '
               'session you connect to.',
+              style: theme.textTheme.bodyMedium,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.md),
             if (_recentHosts.isNotEmpty) ...[
-              Text('Recent hosts', style: theme.textTheme.labelLarge),
-              const SizedBox(height: 4),
+              Text('Recent hosts', style: theme.textTheme.labelSmall),
+              const SizedBox(height: AppSpacing.xs),
               Wrap(
-                spacing: 8,
-                runSpacing: 8,
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
                 children: [
                   for (final host in _recentHosts)
                     ActionChip(
@@ -182,7 +184,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                     ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
             ],
             TextField(
               controller: _hostController,
@@ -195,7 +197,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
               enableSuggestions: false,
               textInputAction: TextInputAction.done,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.sm),
             Semantics(
               button: true,
               label: 'Check this address for sessions',
@@ -213,7 +215,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
             ),
             if (_searchedOnce && !_discovering && _found == null)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
                 child: Text(
                   'Nothing answered at ${_hostController.text.trim()}. Check '
                   'the address, and that omp is running there.',
@@ -221,10 +223,11 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                 ),
               ),
             if (_found != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               Card(
                 child: ListTile(
-                  leading: const Icon(Icons.check_circle_outline),
+                  dense: true,
+                  leading: const Icon(Icons.check_circle_outline, size: 20),
                   title: Text(
                     _found!.sessions.length == 1
                         ? '1 session found'
@@ -232,6 +235,8 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                   ),
                   subtitle: Text(
                     _found!.sessions.map((s) => s.name).join(', '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   trailing: Semantics(
                     button: true,
@@ -245,7 +250,7 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
                 ),
               ),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             Semantics(
               label: 'Pairing code, six characters',
               textField: true,
@@ -273,17 +278,19 @@ class _PairingCodeScreenState extends State<PairingCodeScreen> {
               Semantics(
                 liveRegion: true,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: Text(
                     _error!,
-                    style: TextStyle(color: theme.colorScheme.error),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
                   ),
                 ),
               ),
             Semantics(
               button: true,
               label: 'Connect with this code',
-              child: ElevatedButton(
+              child: FilledButton(
                 onPressed: _connecting ? null : _connect,
                 child: _connecting
                     ? const SizedBox(

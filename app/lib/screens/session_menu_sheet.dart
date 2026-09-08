@@ -59,15 +59,19 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
     final disabled = !widget.canControl || _busy;
 
     return SafeArea(
+      top: false,
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Text('Session', style: theme.textTheme.titleMedium),
+                Semantics(
+                  header: true,
+                  child: Text('Session', style: theme.textTheme.titleSmall),
+                ),
                 const Spacer(),
                 if (_busy)
                   const SizedBox(
@@ -77,6 +81,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                   ),
               ],
             ),
+            const SizedBox(height: AppSpacing.sm),
             if (!widget.canControl)
               Padding(
                 padding: const EdgeInsets.only(
@@ -180,7 +185,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
               ),
             ),
             if (state?.todos != null && state!.todos!.isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.lg),
+              const SizedBox(height: AppSpacing.sm),
               Text('Todos', style: theme.textTheme.titleSmall),
               const SizedBox(height: AppSpacing.xs),
               for (final todo in state.todos!)
@@ -202,7 +207,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                   ),
                 ),
             ],
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: AppSpacing.sm),
             const Divider(),
             const SizedBox(height: AppSpacing.sm),
             Text('Notifications', style: theme.textTheme.titleSmall),
@@ -216,7 +221,9 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                 value: NotificationService.instance.userEnabled ?? false,
                 onChanged: (value) {
                   setState(() {
-                    unawaited(NotificationService.instance.setUserEnabled(value));
+                    unawaited(
+                      NotificationService.instance.setUserEnabled(value),
+                    );
                   });
                 },
               ),

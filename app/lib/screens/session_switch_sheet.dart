@@ -4,6 +4,7 @@ import '../profile_store.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
 import '../session_store.dart';
+import '../theme.dart';
 
 /// Lets the user switch the active session without a cold start: pick a
 /// different agent in the current connection's roster (relay mode, or any
@@ -64,34 +65,43 @@ class _SessionSwitchSheetState extends State<SessionSwitchSheet> {
     final showRoster = agents.length > 1;
 
     return SafeArea(
+      top: false,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Semantics(
               header: true,
-              child: Text('Switch session', style: theme.textTheme.titleMedium),
+              child: Text('Switch session', style: theme.textTheme.titleSmall),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.sm),
             if (showRoster) ...[
-              Text('Agents in this connection', style: theme.textTheme.labelLarge),
-              const SizedBox(height: 4),
+              Text(
+                'Agents in this connection',
+                style: theme.textTheme.labelSmall,
+              ),
+              const SizedBox(height: AppSpacing.xs),
               for (final agent in agents)
                 _AgentTile(
                   agent: agent,
                   isActive: agent.agentId == widget.status.subscribedAgentId,
                   onTap: () => _switchAgent(agent),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.sm),
             ],
-            Text('Other saved connections', style: theme.textTheme.labelLarge),
-            const SizedBox(height: 4),
+            Text('Other saved connections', style: theme.textTheme.labelSmall),
+            const SizedBox(height: AppSpacing.xs),
             if (_otherProfiles.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('No other saved connections.'),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                child: Text(
+                  'No other saved connections.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
               )
             else
               for (final profile in _otherProfiles)
@@ -119,6 +129,7 @@ class _AgentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final statusText = isActive
         ? 'Active'
         : (agent.online ? 'Online' : 'Offline');
@@ -127,10 +138,37 @@ class _AgentTile extends StatelessWidget {
       selected: isActive,
       label: '${agent.name}, ${agent.agentId}, $statusText',
       child: ListTile(
-        leading: Icon(isActive ? Icons.radio_button_checked : Icons.circle_outlined),
+        dense: true,
+        leading: Icon(
+          isActive ? Icons.check_circle : Icons.circle_outlined,
+          size: 20,
+        ),
         title: Text(agent.name),
-        subtitle: Text('${agent.agentId}\n${agent.cwd}\n$statusText', maxLines: 3),
-        isThreeLine: true,
+        subtitle: Text(
+          '${agent.agentId}, ${agent.cwd}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: isActive
+            ? Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm,
+                  vertical: AppSpacing.xxs,
+                ),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(AppRadius.small),
+                ),
+                child: Text(
+                  'Current',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              )
+            : (agent.online
+                  ? null
+                  : Text('Offline', style: theme.textTheme.labelSmall)),
         onTap: onTap,
       ),
     );
@@ -148,20 +186,22 @@ class _ProfileSwitchTile extends StatelessWidget {
     final transport = profile.isDirect ? 'Direct' : 'Relay';
     final roleLabel = profile.role == ClientRole.control ? 'Control' : 'Viewer';
     final agentLine = profile.agentId;
-    final subtitleParts = [
-      transport,
-      roleLabel,
-      ?agentLine,
-      ?profile.cwd,
-    ];
+    final subtitleParts = [transport, roleLabel, ?agentLine, ?profile.cwd];
     return Semantics(
       button: true,
       label: '${profile.label}, ${subtitleParts.join(", ")}',
       child: ListTile(
-        leading: Icon(profile.role == ClientRole.control ? Icons.edit : Icons.visibility),
+        dense: true,
+        leading: Icon(
+          profile.role == ClientRole.control ? Icons.edit : Icons.visibility,
+          size: 20,
+        ),
         title: Text(profile.label),
-        subtitle: Text(subtitleParts.join('\n'), maxLines: 3),
-        isThreeLine: true,
+        subtitle: Text(
+          subtitleParts.join(', '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         onTap: onTap,
       ),
     );

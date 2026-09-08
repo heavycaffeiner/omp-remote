@@ -97,8 +97,7 @@ class SessionStore extends ChangeNotifier {
   /// previous one instead of appending another transcript line.
   final Map<String, SubagentEvent> _subagents = {};
   List<SubagentEvent> get subagents => List.unmodifiable(_subagents.values);
-  bool get hasActiveSubagents =>
-      _subagents.values.any((a) => !a.isTerminal);
+  bool get hasActiveSubagents => _subagents.values.any((a) => !a.isTerminal);
 
   /// Live todo list. Seeded from `state.todos` and replaced by every
   /// `todos` event, so the panel tracks edits without waiting for a turn

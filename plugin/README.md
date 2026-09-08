@@ -20,36 +20,47 @@ extensions:
   - ./plugin
 ```
 
-With neither `OMP_REMOTE_RELAY_URL` nor local serving enabled (see below),
-the extension loads and stays completely dormant: no listener, no outbound
-connection, no commands registered beyond the diagnostics one.
+Nothing else is needed. Out of the box the extension serves this workstation
+directly on port 8788 and uses no relay: `/remote-omp` prints a QR code the
+app scans over your LAN or Tailscale.
 
-## Environment variables
+## Configuration
 
-All configuration is read once at load time from `process.env`; nothing
-downstream re-reads the environment.
+Settings live in `~/.omp/agent/omp-remote.json` (or
+`$PI_CODING_AGENT_DIR/omp-remote.json`, or the exact path in
+`OMP_REMOTE_CONFIG`), written at mode 0600 because it holds relay
+credentials. Change it with `/remote-omp config` rather than by hand. No
+setting is read from the environment.
 
-| Variable                     | Default                          | Meaning                                                                 |
-| ----------------------------- | --------------------------------- | ------------------------------------------------------------------------ |
-| `OMP_REMOTE_RELAY_URL`        | unset (relay disabled)            | `ws://` or `wss://` URL of the relay's `/agent` endpoint.                |
-| `OMP_REMOTE_TOKEN`            | none                              | Agent token presented to the relay. Required when `OMP_REMOTE_RELAY_URL` is set. |
-| `OMP_REMOTE_CONTROL_TOKEN`    | unset                             | Relay's `OMP_RELAY_CONTROL_TOKEN`. Only used to build a relay control pairing link. |
-| `OMP_REMOTE_VIEWER_TOKEN`     | unset                             | Relay's `OMP_RELAY_VIEWER_TOKEN`. Only used to build a relay viewer pairing link. |
-| `OMP_REMOTE_LOCAL`            | `1` (enabled)                     | Set to `0` to disable the plugin's own local WebSocket server.          |
-| `OMP_REMOTE_LOCAL_PORT`       | `8788`                            | The port every session on this machine shares. The first to bind it serves the rest. |
-| `OMP_REMOTE_LOCAL_BIND`       | `0.0.0.0`                         | Bind address for the local server.                                      |
-| `OMP_REMOTE_AGENT_ID`         | `<hostname>/<cwd basename>#<pid>` | Agent id advertised in `hello`/roster entries and pairing links.        |
-| `OMP_REMOTE_ALLOW_BASH`       | `0` (disabled)                    | Set to `1` or `true` to allow the `bash` command to run real shell commands on this workstation. |
-| `OMP_REMOTE_REMOTE_APPROVAL`  | `0` (disabled)                    | Set to `1` or `true` to let an attached control client's `deny` answer block a tool call before it runs. |
+```jsonc
+{
+  "local": { "enabled": true, "port": 8788, "bind": "0.0.0.0" },
+  "allowBash": false,
+  "remoteApproval": false
+  // "relay": { "url": "wss://relay.example/agent", "token": "...",
+  //            "controlToken": "...", "viewerToken": "..." }
+}
+```
 
-A present-but-invalid value (a malformed relay URL, an out-of-range port, a
-relay URL with no token) fails loudly once, through a notification on
-`session_start`; the extension does not throw at load time and does not
-retry silently with a guessed default.
+| Setting          | Default     | Meaning                                                                 |
+| ---------------- | ----------- | ------------------------------------------------------------------------ |
+| `relay`          | absent      | Route through a relay as well as serving directly. Absent means direct only. |
+| `local.enabled`  | `true`      | Serve this workstation directly.                                        |
+| `local.port`     | `8788`      | The port every session on this machine shares. The first to bind it serves the rest. |
+| `local.bind`     | `0.0.0.0`   | Bind address for the direct server.                                     |
+| `allowBash`      | `false`     | Allow the `bash` command to run real shell commands on this workstation. |
+| `remoteApproval` | `false`     | Let an attached control client's `deny` answer block a tool call before it runs. |
 
-Both transports may be active at once: a session started with both a relay
-URL and local serving enabled is simultaneously relayed and directly
-reachable, exactly as `docs/protocol.md`'s Topology section describes.
+An unreadable file, a malformed value, or a relay entry missing its URL or
+token falls back to that row's default: a corrupt settings file leaves you
+with working direct serving rather than a failed session.
+
+The agent id is always `<hostname>/<cwd basename>#<pid suffix>`. It is not
+configurable: it has to stay unique across the sessions sharing one port.
+
+Both transports may be active at once. A session with a relay configured is
+simultaneously relayed and directly reachable, exactly as
+`docs/protocol.md`'s Topology section describes.
 
 ## Commands
 
@@ -76,6 +87,16 @@ pairing has no code, since a relayed client cannot reach the local server.
 - `/remote-omp viewer`: a **viewer** (read-only) link instead of control.
 - `/remote-omp relay`: forces the relay form of the link even when the local
   server is up.
+- `/remote-omp config`: shows the current settings and how to change each of
+  them. No token is ever echoed back, only whether one is set.
+- `/remote-omp config relay <url> <token>`: routes this session through a
+  relay as well as serving directly, and connects immediately. Pointing at a
+  different relay drops the role tokens, since those belong to whichever
+  relay issued them.
+- `/remote-omp config relay off`: back to direct only.
+- `/remote-omp config port|bind|direct|bash|approval`: the remaining
+  settings. The reply says when a change needs a restart, which is the case
+  for anything the already-bound listening socket owns.
 
 When more than one network address is plausibly reachable (for example a
 Tailscale address and a LAN address on the same machine), every candidate is
@@ -88,11 +109,11 @@ and not just the one that started first. Its output names the session to pick
 from the app's list.
 
 Relay pairing needs a client-facing secret that the relay operator issues,
-which is not the same credential the plugin dials the relay with. Set
-`OMP_REMOTE_CONTROL_TOKEN` to the relay's `OMP_RELAY_CONTROL_TOKEN`, and
-`OMP_REMOTE_VIEWER_TOKEN` to its `OMP_RELAY_VIEWER_TOKEN`, for the
-corresponding link to be available. Without them `/remote-omp relay` fails
-and says which variable to set.
+which is not the same credential the plugin dials the relay with. Run
+`/remote-omp config relay control <token>` with the relay's
+`OMP_RELAY_CONTROL_TOKEN`, and `/remote-omp config relay viewer <token>` with
+its `OMP_RELAY_VIEWER_TOKEN`, for the corresponding link to be available.
+Without them `/remote-omp relay` fails and says which one to set.
 
 The agent token is never substituted for either. It authenticates at
 `/agent` and can claim any `agentId`, which is more power than any client
@@ -110,7 +131,7 @@ session transcript or sent to the model.
 ### Relay
 
 The plugin dials out to a relay's `/agent` WebSocket endpoint
-(`OMP_REMOTE_RELAY_URL`) and presents `OMP_REMOTE_TOKEN` as its agent
+(the `relay.url` setting) and presents `relay.token` as its agent
 credential. Neither the workstation nor the phone needs an inbound port;
 this is the transport to use across networks the workstation cannot expose a
 port on. Reconnection uses the extension's own managed timers
@@ -119,7 +140,7 @@ take the whole session down with it.
 
 ### Direct
 
-The plugin runs its own WebSocket server (`OMP_REMOTE_LOCAL_PORT`, default
+The plugin runs its own WebSocket server (the `local.port` setting, default
 `8788`) serving `/client`, `/agent`, `/pair`, `/join`, and `/healthz` as
 `docs/protocol.md` specifies. Tokens are minted at startup and handed out only
 through a redeemed pairing code or a `/remote-omp` link, never logged. Use this
@@ -149,7 +170,7 @@ channel to do so. The scope is exactly this and nothing more:
   (`ctx.invokeTool`) when nothing is attached or the remote answer times out
   or is cancelled. The terminal picker keeps working unchanged in both
   cases.
-- `tool_call` **deny**, when `OMP_REMOTE_REMOTE_APPROVAL=1`: an attached
+- `tool_call` **deny**, when `remoteApproval` is on: an attached
   control client's `deny` answer blocks the tool before it runs, using the
   `tool_call` event's block-decision return.
 
@@ -185,7 +206,7 @@ anything.
 
 ## The `bash` gate
 
-`OMP_REMOTE_ALLOW_BASH` defaults to `0`. A `bash` command is refused outright
+`allowBash` defaults to false. A `bash` command is refused outright
 while it is off, with an error naming exactly that. Turning it on is a
 deliberate decision to let whoever holds the control token run arbitrary
 shell commands on this workstation: the command runs through `Bun.spawn`
@@ -194,7 +215,7 @@ argument, never concatenated into a larger shell line), its output streams
 back as `bash_output` events coalesced to at most one emission per 100 ms,
 and it can be cancelled with `abort_bash`. This is a remote shell, not a
 sandboxed one; treat the control token as workstation-root-adjacent once
-`OMP_REMOTE_ALLOW_BASH=1` is set.
+`allowBash` is turned on.
 
 ## Known API gaps
 

@@ -166,24 +166,33 @@ question, but every command and answer they try is refused. The role comes from
 which token authenticated the connection, so a viewer cannot promote itself.
 
 Viewer links only exist for direct pairing out of the box. Over a relay they
-need `OMP_REMOTE_VIEWER_TOKEN` set to the relay's own viewer token.
+need the relay's own viewer token, set with
+`/remote-omp config relay viewer <token>`.
 
 ## Configuration
 
-All optional. The plugin works unconfigured.
+All optional. Unconfigured, the plugin serves this workstation directly on
+port 8788 and uses no relay, which is what pairing over your LAN or Tailscale
+needs.
 
-| Variable                    | Default        | Meaning                                        |
-| --------------------------- | -------------- | ---------------------------------------------- |
-| `OMP_REMOTE_LOCAL`          | `1`            | `0` disables the local server                   |
-| `OMP_REMOTE_LOCAL_PORT`     | `8788`         | The port every session on the machine shares    |
-| `OMP_REMOTE_LOCAL_BIND`     | `0.0.0.0`      | Local server bind address                       |
-| `OMP_REMOTE_AGENT_ID`       | `<host>/<dir>` | How this session identifies itself              |
-| `OMP_REMOTE_RELAY_URL`      | unset          | `ws://` or `wss://` relay, enables the uplink   |
-| `OMP_REMOTE_TOKEN`          | unset          | Agent token, required with a relay URL          |
-| `OMP_REMOTE_CONTROL_TOKEN`  | unset          | Relay's control token, for relay pairing links  |
-| `OMP_REMOTE_VIEWER_TOKEN`   | unset          | Relay's viewer token, for relay viewer links    |
-| `OMP_REMOTE_ALLOW_BASH`     | `0`            | `1` lets a control client run shell commands    |
-| `OMP_REMOTE_REMOTE_APPROVAL`| `0`            | `1` forwards tool approvals to the phone        |
+Run `/remote-omp config` in a session to see the current settings and how to
+change each of them. There are no environment variables; everything is stored
+in `~/.omp/agent/omp-remote.json` at mode 0600, because it holds credentials.
+
+| Setting          | Default   | Meaning                                       |
+| ---------------- | --------- | --------------------------------------------- |
+| `relay`          | absent    | Also route through a relay, so no inbound port is needed |
+| `local.enabled`  | `true`    | Serve this workstation directly               |
+| `local.port`     | `8788`    | The port every session on the machine shares  |
+| `local.bind`     | `0.0.0.0` | Direct server bind address                    |
+| `allowBash`      | `false`   | Let a control client run shell commands       |
+| `remoteApproval` | `false`   | Forward tool approvals to the phone           |
+
+```
+/remote-omp config relay wss://relay.example/agent <agent-token>
+/remote-omp config relay control <relay-control-token>
+/remote-omp config relay off
+```
 
 ## Security
 
@@ -226,9 +235,9 @@ Known, and unlikely to change without upstream API work.
 ## Development
 
 ```sh
-bun install && bun run typecheck          # plugin
-cd relay && go test ./... && go vet ./... # relay
-cd app   && flutter analyze && flutter test
+bun install && bun run typecheck && bun run test   # plugin
+cd relay && go test ./... && go vet ./...          # relay
+cd app   && flutter analyze && flutter test        # app
 ```
 
 Go 1.27, Bun 1.4, Flutter 3.47 with Dart 3.13.

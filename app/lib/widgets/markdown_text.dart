@@ -29,7 +29,7 @@ class MarkdownText extends StatelessWidget {
       data: text,
       selectable: true,
       styleSheet: MarkdownStyleSheet(
-        p: body,
+        p: body?.copyWith(height: 1.35),
         h1: theme.textTheme.titleLarge,
         h2: theme.textTheme.titleMedium,
         h3: theme.textTheme.titleSmall,
@@ -55,7 +55,7 @@ class MarkdownText extends StatelessWidget {
           border: Border(left: BorderSide(color: scheme.outline, width: 3)),
         ),
         blockquotePadding: const EdgeInsets.all(AppSpacing.sm),
-        blockSpacing: AppSpacing.sm,
+        blockSpacing: AppSpacing.xs,
         listBullet: body,
         horizontalRuleDecoration: BoxDecoration(
           border: Border(top: BorderSide(color: scheme.outlineVariant)),

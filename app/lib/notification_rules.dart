@@ -246,6 +246,8 @@ class NotificationDecider {
   /// is free to notify again instead of being treated as a stale replay.
   void resetForAgent(String agentId) {
     _shownEventKeys.removeWhere((key) => key.startsWith('$agentId:'));
-    _requestNotificationIds.removeWhere((key, _) => key.startsWith('$agentId:'));
+    _requestNotificationIds.removeWhere(
+      (key, _) => key.startsWith('$agentId:'),
+    );
   }
 }

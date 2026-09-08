@@ -203,8 +203,7 @@ class NotificationService {
     }
     _permissionGranted = granted ?? false;
     if (!_permissionGranted) {
-      disabledReason =
-          'Notification permission was denied. Enable it in system settings to be alerted when the agent needs you.';
+      disabledReason = 'Notification permission was denied. Enable it in system settings to be alerted when the agent needs you.';
       return false;
     }
     disabledReason = null;

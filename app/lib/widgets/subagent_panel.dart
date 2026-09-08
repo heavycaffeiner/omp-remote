@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../theme.dart';
+import 'panel_shell.dart';
 
 /// Spawned agents run in sessions of their own, so their work never reaches
-/// the parent transcript. This panel is where it shows up: one row per agent,
-/// replaced in place as progress arrives rather than appended, so a fan-out
-/// of eight does not bury the conversation.
+/// the parent transcript. This panel is where it shows up: collapsed to one
+/// line naming how many are running and the newest one's name, expanded to
+/// one row per agent, replaced in place as progress arrives rather than
+/// appended, so a fan-out of eight does not bury the conversation.
 class SubagentPanel extends StatefulWidget {
   const SubagentPanel({required this.subagents, super.key});
 
@@ -25,56 +27,40 @@ class _SubagentPanelState extends State<SubagentPanel> {
 
     final theme = Theme.of(context);
     final running = widget.subagents.where((a) => !a.isTerminal).length;
+    final newest = widget.subagents.last;
     final label = running > 0
-        ? '$running of ${widget.subagents.length} agents running'
-        : '${widget.subagents.length} agents finished';
+        ? '$running subagent${running == 1 ? '' : 's'} running, '
+              'newest: ${newest.name}'
+        : '${widget.subagents.length} '
+              'subagent${widget.subagents.length == 1 ? '' : 's'} finished, '
+              'newest: ${newest.name}';
 
-    return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
+    return PanelShell(
+      leading: Icon(
+        running > 0 ? Icons.groups : Icons.groups_outlined,
+        size: 18,
+        color: theme.colorScheme.onSurfaceVariant,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
+      title: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.bodySmall,
+      ),
+      trailing: running > 0
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : null,
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      semanticsLabel: _expanded ? 'Hide agent details' : 'Show agent details',
+      expandedChild: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            button: true,
-            expanded: _expanded,
-            label: _expanded ? 'Hide agent details' : 'Show agent details',
-            child: InkWell(
-              onTap: () => setState(() => _expanded = !_expanded),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.md,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      running > 0 ? Icons.groups : Icons.groups_outlined,
-                      size: 20,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Text(label, style: theme.textTheme.titleSmall),
-                    ),
-                    if (running > 0)
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (_expanded)
-            for (final agent in widget.subagents) _SubagentRow(agent: agent),
+          for (final agent in widget.subagents) _SubagentRow(agent: agent),
         ],
       ),
     );
@@ -116,12 +102,7 @@ class _SubagentRow extends StatelessWidget {
     return Semantics(
       label: '${agent.name}, ${facts.join(", ")}',
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg,
-          0,
-          AppSpacing.lg,
-          AppSpacing.md,
-        ),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -129,7 +110,7 @@ class _SubagentRow extends StatelessWidget {
               padding: const EdgeInsets.only(top: 2),
               child: Icon(icon, size: 18, color: color),
             ),
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,7 +128,7 @@ class _SubagentRow extends StatelessWidget {
                     ),
                   ),
                   if (agent.text != null && agent.text!.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.xs),
+                    const SizedBox(height: AppSpacing.xxs),
                     Text(agent.text!, style: theme.textTheme.bodySmall),
                   ],
                 ],

@@ -170,12 +170,13 @@ class _DiffRow extends StatelessWidget {
     final style = theme.textTheme.bodySmall?.copyWith(
       fontFamily: 'monospace',
       color: foreground,
+      height: 1.25,
     );
 
     return Container(
       color: background,
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
+        horizontal: AppSpacing.xs,
         vertical: 1,
       ),
       child: Row(

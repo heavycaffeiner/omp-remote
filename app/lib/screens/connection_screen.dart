@@ -4,8 +4,10 @@ import '../pairing.dart';
 import '../profile_store.dart';
 import '../protocol.dart';
 import '../relay_client.dart';
+import '../theme.dart';
 import 'pairing_code_screen.dart';
 import 'pairing_review_screen.dart';
+import 'pairing_sheet.dart';
 import 'qr_scan_screen.dart';
 import 'session_screen.dart';
 
@@ -24,9 +26,11 @@ class ConnectionScreen extends StatefulWidget {
 
 class _ConnectionScreenState extends State<ConnectionScreen> {
   List<SavedProfile> _profiles = const [];
-  bool _showManualForm = false;
 
-  final _linkController = TextEditingController();
+  /// Id of the saved profile currently being connected to, or null if none.
+  /// Only one row can be mid-connect at a time; the row shows a spinner in
+  /// place of its avatar and does not accept another tap.
+  String? _connectingId;
 
   @override
   void initState() {
@@ -40,16 +44,17 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 
   @override
   void dispose() {
-    _linkController.dispose();
     super.dispose();
   }
 
   Future<void> _connectWithProfile(SavedProfile saved) async {
+    if (_connectingId != null) return;
     final uri = Uri.tryParse(saved.url);
     if (uri == null) {
       _showError('Saved connection has an invalid URL.');
       return;
     }
+    setState(() => _connectingId = saved.id);
     await widget.profileStore.recordUsed(saved.id);
     if (!mounted) return;
     final profile = ConnectionProfile(
@@ -77,7 +82,11 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             ),
           ),
         )
-        .then((_) => _reloadProfiles());
+        .then((_) {
+          if (!mounted) return;
+          setState(() => _connectingId = null);
+          _reloadProfiles();
+        });
   }
 
   void _showError(String message) {
@@ -88,20 +97,18 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   /// Takes the whole `remote-omp://pair?...` link from `/remote-omp`. One
   /// paste carries the address, the token, the role, and which session to
   /// open, so there is nothing left to fill in by hand.
-  Future<void> _submitLink() async {
-    final raw = _linkController.text.trim();
-    if (raw.isEmpty) {
+  Future<void> _submitLink(String raw) async {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
       _showError('Paste the link shown by /remote-omp.');
       return;
     }
-    final result = PairingPayload.parse(raw);
+    final result = PairingPayload.parse(trimmed);
     if (result is! PairingPayload) {
       _showError('Pairing link error: $result');
       return;
     }
     if (!mounted) return;
-    _linkController.clear();
-    setState(() => _showManualForm = false);
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => PairingReviewScreen(
@@ -143,6 +150,19 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     if (mounted) _reloadProfiles();
   }
 
+  Future<void> _openPairingSheet() async {
+    final choice = await PairingSheet.show(context);
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case ScanQrChoice():
+        await _scanQr();
+      case EnterCodeChoice():
+        await _enterCode();
+      case PasteLinkChoice(link: final link):
+        await _submitLink(link);
+    }
+  }
+
   Future<void> _renameProfile(SavedProfile profile) async {
     final controller = TextEditingController(text: profile.label);
     final newLabel = await showDialog<String>(
@@ -162,8 +182,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text),
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
             child: const Text('Rename'),
           ),
         ],
@@ -202,117 +221,90 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('OMPRemote')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Semantics(
-              header: true,
-              child: Text(
-                'Saved connections',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (_profiles.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  'No saved connections yet. Scan a QR code, paste the '
-                  'pairing link, or enter a code.',
-                ),
-              ),
-            for (final profile in _profiles)
-              _ProfileTile(
-                profile: profile,
-                onTap: () => _connectWithProfile(profile),
-                onRename: () => _renameProfile(profile),
-                onDelete: () => _deleteProfile(profile),
-              ),
-            const SizedBox(height: 24),
-            Semantics(
-              button: true,
-              label: 'Enter a pairing code',
-              child: ElevatedButton.icon(
-                onPressed: _enterCode,
-                icon: const Icon(Icons.dialpad),
-                label: const Text('Enter a code'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Semantics(
-              button: true,
-              label: 'Scan pairing QR code',
-              child: OutlinedButton.icon(
-                onPressed: _scanQr,
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan QR to pair'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Semantics(
-              button: true,
-              label: _showManualForm
-                  ? 'Hide the pairing link field'
-                  : 'Paste a pairing link',
-              child: OutlinedButton.icon(
-                onPressed: () =>
-                    setState(() => _showManualForm = !_showManualForm),
-                icon: Icon(
-                  _showManualForm ? Icons.expand_less : Icons.expand_more,
-                ),
-                label: const Text('Paste a link'),
-              ),
-            ),
-            if (_showManualForm) _buildLinkForm(context),
-          ],
-        ),
+      appBar: AppBar(
+        title: Semantics(header: true, child: const Text('OMPRemote')),
       ),
+      body: SafeArea(
+        child: _profiles.isEmpty
+            ? _buildEmptyState(context)
+            : _buildProfileList(context),
+      ),
+      floatingActionButton: _profiles.isEmpty
+          ? null
+          : Semantics(
+              button: true,
+              label: 'Add a connection',
+              child: FloatingActionButton.extended(
+                onPressed: _openPairingSheet,
+                icon: const Icon(Icons.add),
+                label: const Text('Add a connection'),
+              ),
+            ),
     );
   }
 
-  Widget _buildLinkForm(BuildContext context) {
+  Widget _buildProfileList(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.xxl,
+      ),
+      children: [
+        for (final profile in _profiles)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: _ProfileTile(
+              profile: profile,
+              connecting: _connectingId == profile.id,
+              onTap: () => _connectWithProfile(profile),
+              onRename: () => _renameProfile(profile),
+              onDelete: () => _deleteProfile(profile),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Run /remote-omp on your workstation and paste the link it '
-            'prints. It carries the whole connection.',
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          Semantics(
-            label: 'Pairing link',
-            textField: true,
-            child: TextField(
-              controller: _linkController,
-              decoration: const InputDecoration(
-                labelText: 'Pairing link',
-                hintText: 'remote-omp://pair?v=2&...',
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.phonelink_outlined,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              'No connections yet',
+              style: theme.textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Run /remote-omp on your workstation. It prints a QR code '
+              'and a link that pair this device with that session.',
+              style: theme.textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Semantics(
+              button: true,
+              label: 'Add a connection',
+              child: FilledButton.icon(
+                onPressed: _openPairingSheet,
+                icon: const Icon(Icons.add),
+                label: const Text('Add a connection'),
               ),
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              enableSuggestions: false,
-              maxLines: 2,
-              minLines: 1,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _submitLink(),
             ),
-          ),
-          const SizedBox(height: 16),
-          Semantics(
-            button: true,
-            label: 'Connect using this link',
-            child: ElevatedButton(
-              onPressed: _submitLink,
-              child: const Text('Connect'),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -321,35 +313,68 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 class _ProfileTile extends StatelessWidget {
   const _ProfileTile({
     required this.profile,
+    required this.connecting,
     required this.onTap,
     required this.onRename,
     required this.onDelete,
   });
 
   final SavedProfile profile;
+  final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onRename;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final roleLabel = profile.role == ClientRole.control ? 'Control' : 'Viewer';
+    final theme = Theme.of(context);
+    final isControl = profile.role == ClientRole.control;
+    final roleLabel = isControl ? 'Control' : 'Viewer';
     final transportLabel = profile.isDirect ? 'Direct' : 'Relay';
-    final agentLine = profile.agentId;
-    final subtitleLines = [
-      '$transportLabel, role: $roleLabel',
-      ?agentLine,
-      ?profile.cwd,
-    ];
+    final cwdParts = profile.cwd?.split('/').where((part) => part.isNotEmpty);
+    final cwdBase = cwdParts == null || cwdParts.isEmpty ? null : cwdParts.last;
+
     return Card(
       child: ListTile(
-        leading: Icon(
-          profile.role == ClientRole.control ? Icons.edit : Icons.visibility,
+        leading: CircleAvatar(
+          radius: 20,
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          child: connecting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  isControl ? Icons.edit_outlined : Icons.visibility_outlined,
+                  size: 20,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
         ),
-        title: Text(profile.label),
-        subtitle: Text(subtitleLines.join('\n'), maxLines: 3),
-        isThreeLine: true,
-        onTap: onTap,
+        title: Text(
+          profile.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Row(
+          children: [
+            _MetaChip(transportLabel),
+            const SizedBox(width: AppSpacing.xs),
+            _MetaChip(roleLabel),
+            if (cwdBase != null) ...[
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  cwdBase,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ],
+        ),
+        onTap: connecting ? null : onTap,
         trailing: Semantics(
           button: true,
           label: 'Connection options for ${profile.label}',
@@ -374,6 +399,35 @@ class _ProfileTile extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One word of connection metadata. A chip rather than a separator-joined
+/// string so the transport and the role stay legible when the row narrows.
+class _MetaChip extends StatelessWidget {
+  const _MetaChip(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.xs,
+        vertical: AppSpacing.xxs,
+      ),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.extraSmall),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

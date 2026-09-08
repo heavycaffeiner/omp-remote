@@ -228,9 +228,7 @@ class _SessionScreenState extends State<SessionScreen>
         // Already on screen: the state header, subagent panel, and
         // transcript carry what these dashboards show.
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('That view is already on this screen.'),
-          ),
+          const SnackBar(content: Text('That view is already on this screen.')),
         );
       default:
         ScaffoldMessenger.of(context).showSnackBar(
@@ -273,19 +271,23 @@ class _SessionScreenState extends State<SessionScreen>
     );
   }
 
-  Future<void> _runQueueCommand(CommandName cmd, Map<String, Object?> args) async {
+  Future<void> _runQueueCommand(
+    CommandName cmd,
+    Map<String, Object?> args,
+  ) async {
     try {
       await widget.relayClient.sendCommand(cmd, args: args);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Queue change refused: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Queue change refused: $e')));
     }
   }
 
   void _editQueued(String id, String text) {
-    unawaited(_runQueueCommand(CommandName.queueEdit, {'id': id, 'text': text}));
+    unawaited(
+      _runQueueCommand(CommandName.queueEdit, {'id': id, 'text': text}),
+    );
   }
 
   void _removeQueued(String id) {
@@ -365,111 +367,102 @@ class _SessionScreenState extends State<SessionScreen>
     final theme = Theme.of(context);
     final isViewer = _status.role == ClientRole.viewer;
     final notConnected = _status.phase != ConnectionPhase.connected;
-    final sendDisabledReason = isViewer
-        ? 'Sending is disabled: read-only connection.'
-        : (notConnected ? 'Sending is disabled: not connected.' : null);
-    final abortDisabledReason = !_canControl
-        ? null // covered by sendDisabledReason already
-        : (!streaming ? 'Abort is disabled: nothing is currently streaming.' : null);
+    // Why sending is blocked belongs in the field the user is looking at,
+    // not on a row of its own above it.
+    final hint = isViewer
+        ? 'Read-only connection, sending is disabled'
+        : (notConnected
+              ? 'Not connected, sending is disabled'
+              : 'Message the agent');
+    final queued = _sessionStore.state?.queued ?? 0;
 
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border(
-          top: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
+    return Material(
+      color: theme.colorScheme.surface,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (sendDisabledReason != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: Row(
-                children: [
-                  Icon(
-                    isViewer ? Icons.visibility : Icons.cloud_off,
-                    size: 14,
-                    color: theme.colorScheme.onSurfaceVariant,
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Semantics(
+                    label: 'Prompt text. $hint',
+                    textField: true,
+                    child: TextField(
+                      controller: _promptController,
+                      enabled: _canControl && !_sending,
+                      minLines: 1,
+                      maxLines: 6,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.newline,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: InputDecoration(hintText: hint),
+                      onSubmitted: (_) => _canControl ? _sendPrompt() : null,
+                    ),
                   ),
+                ),
+                // Interrupting only exists while there is a turn to
+                // interrupt; a permanently disabled stop button reads as a
+                // control that does nothing.
+                if (streaming && _canControl) ...[
                   const SizedBox(width: AppSpacing.xs),
-                  Expanded(
-                    child: Text(
-                      sendDisabledReason,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                  Semantics(
+                    button: true,
+                    label: 'Abort the current turn',
+                    child: IconButton.filledTonal(
+                      onPressed: _abort,
+                      tooltip: 'Abort the current turn',
+                      style: IconButton.styleFrom(
+                        foregroundColor: theme.colorScheme.error,
                       ),
+                      icon: const Icon(Icons.stop),
                     ),
                   ),
                 ],
-              ),
-            )
-          else if (abortDisabledReason != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: Text(
-                abortDisabledReason,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                const SizedBox(width: AppSpacing.xs),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _promptController,
+                  builder: (context, value, _) {
+                    final ready =
+                        _canControl &&
+                        !_sending &&
+                        value.text.trim().isNotEmpty;
+                    // The queue depth rides the button that filled it rather
+                    // than spending a whole row on one integer.
+                    return Badge(
+                      isLabelVisible: queued > 0,
+                      label: Text('$queued'),
+                      child: Semantics(
+                        button: true,
+                        label: queued > 0
+                            ? 'Send prompt, $queued already queued'
+                            : 'Send prompt. $hint',
+                        enabled: ready,
+                        child: IconButton.filled(
+                          onPressed: ready ? _sendPrompt : null,
+                          tooltip: 'Send prompt',
+                          icon: _sending
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.arrow_upward),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              ),
+              ],
             ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Semantics(
-                  label: 'Prompt text',
-                  textField: true,
-                  child: TextField(
-                    controller: _promptController,
-                    enabled: _canControl && !_sending,
-                    minLines: 1,
-                    maxLines: 8,
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(
-                      hintText: 'Send a message to the agent',
-                    ),
-                    onSubmitted: (_) => _canControl ? _sendPrompt() : null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Semantics(
-                button: true,
-                label: 'Send prompt',
-                enabled: _canControl && !_sending,
-                child: IconButton.filled(
-                  onPressed: (_canControl && !_sending) ? _sendPrompt : null,
-                  icon: _sending
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              Semantics(
-                button: true,
-                label: streaming
-                    ? 'Abort current turn'
-                    : 'Abort, disabled: nothing streaming',
-                enabled: _canControl && streaming,
-                child: IconButton.filledTonal(
-                  onPressed: (_canControl && streaming) ? _abort : null,
-                  icon: const Icon(Icons.stop_circle_outlined),
-                ),
-              ),
-            ],
           ),
         ],
       ),
     );
   }
 }
-

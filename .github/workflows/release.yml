@@ -113,8 +113,8 @@ jobs:
 
       # res/ was just wiped by `flutter create`, so every generated icon has to
       # be rebuilt here. One step, because the order matters: the Dart tool
-      # writes the adaptive foreground that flutter_launcher_icons then
-      # consumes, and running them the other way round ships the previous mark.
+      # writes the tile and the adaptive foreground that flutter_launcher_icons
+      # then consumes, and the other order ships the previous mark.
       - name: Generate the icons
         working-directory: app
         run: |

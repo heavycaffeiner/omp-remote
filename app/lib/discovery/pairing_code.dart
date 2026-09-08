@@ -32,6 +32,7 @@ class PairingCodeSuccess extends PairingCodeOutcome {
   final ClientRole role;
   final String agent;
   final String name;
+
   /// Absent from a hub payload, which publishes no filesystem paths.
   final String? cwd;
 }
@@ -113,7 +114,8 @@ Future<PairingCodeOutcome> redeemPairingCode({
     final map = asMap(decoded);
 
     if (response.statusCode == 404) {
-      final message = asString(map['error']) ?? 'unknown or expired pairing code';
+      final message =
+          asString(map['error']) ?? 'unknown or expired pairing code';
       return PairingCodeRejected(message);
     }
     if (response.statusCode != 200) {

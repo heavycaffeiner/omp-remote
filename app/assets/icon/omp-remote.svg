@@ -1,19 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="OMPRemote">
   <title>OMPRemote</title>
 
-  <rect width="1024" height="1024" rx="228" ry="228" fill="#0f0f0f"/>
+  <rect width="1024" height="1024" fill="#000000"/>
 
-  <!-- Pi over two signal arcs: the glyph names oh-my-pi, the arcs make it read
-       as a remote link. Drawn rather than set as text so the mark does not
-       depend on a font being installed. Round caps and joins throughout. -->
-  <g fill="none" stroke="#fafafa" stroke-width="78" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M 300 330 H 724"/>
-    <path d="M 424 330 V 596"/>
-    <path d="M 626 330 V 554 q 0 42 42 42 h 28"/>
-  </g>
-
-  <g fill="none" stroke="#fafafa" stroke-linecap="round" opacity="0.5" stroke-width="54">
-    <path d="M 596 700 a 122 122 0 0 1 -84 34 a 122 122 0 0 1 -84 -34"/>
-    <path d="M 692 786 a 258 258 0 0 1 -180 74 a 258 258 0 0 1 -180 -74"/>
-  </g>
+  <!-- The pi from STIX Two Math, outlined onto this 1024 grid so the mark
+       carries a real letterform instead of three rectangles and needs no
+       font installed. tool/generate_notification_icon.dart holds the same
+       path; a change to one means changing both. -->
+  <path fill="#ffffff" d="M 812 269 L 812 251.6 L 424.7 251.6
+       C 311.8 251.6 240.2 287.4 212 387.2 L 233.7 398.1
+       C 268.4 339.5 292.3 338.4 419.2 338.4
+       C 407.3 432.8 391 494.6 346.5 590.1
+       C 312.9 663.9 304.2 676.9 264.1 746.4 L 267.3 762.6 L 369.3 762.6
+       C 401.9 687.8 454 452.3 460.5 338.4 L 621 338.4
+       C 602.6 437.1 574.4 558.7 574.4 647.6
+       C 574.4 718.1 602.6 772.4 667.7 772.4
+       C 733.9 772.4 768.6 737.7 797.9 682.3 L 780.5 667.2
+       C 765.3 681.3 749.1 696.4 710 696.4
+       C 664.4 696.4 647.1 649.8 647.1 572.8
+       C 647.1 493.6 661.2 378.5 667.7 338.4 L 797.9 338.4 Z"/>
 </svg>

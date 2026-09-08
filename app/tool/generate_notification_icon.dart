@@ -1,22 +1,23 @@
-// Generates the Android notification small icon in every density bucket.
+// Generates every icon raster the app ships: the opaque launcher tile, the
+// adaptive foreground, and the Android notification small icon in each
+// density bucket.
 //
-// Android tints a small icon from its alpha channel alone, so this draws the
-// mark as opaque white on a transparent canvas. The launcher icon cannot stand
-// in: it is an opaque tile, which tints to a solid square. The adaptive
-// foreground cannot either: it is an opaque white square whose glyph is only a
-// faint value difference, which tints to the same block.
+// Android tints a small icon from its alpha channel alone, so that one is
+// drawn as opaque white on a transparent canvas. The launcher tile cannot
+// stand in: it is opaque, which tints to a solid square. The adaptive
+// foreground cannot either: the system composites it over a flat background,
+// so it has to stay mostly transparent.
 //
-// The shapes are drawn here rather than rasterized from assets/icon/
-// omp-remote.svg because no Dart SVG rasterizer is available offline. The
-// coordinates below are the same 1024 grid that file uses, minus its
-// background tile, so a change to the mark means changing both.
+// The outline below is the same path as assets/icon/omp-remote.svg, on the
+// same 1024 grid. It is repeated here rather than rasterized from the SVG
+// because no Dart SVG rasterizer is available offline, so a change to the
+// mark means changing both files.
 //
 // This runs in CI, where ImageMagick is not installed and res/drawable is
 // regenerated and gitignored. The `image` package arrives with
 // flutter_launcher_icons.
 
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:image/image.dart';
 
@@ -28,105 +29,172 @@ const _buckets = <String, int>{
   'xxxhdpi': 96,
 };
 
-// Supersampling factor. Drawing at 8x and averaging down is what gives the
-// strokes clean edges at 24 pixels.
+// Vertical supersampling factor. Horizontal coverage is exact, so this only
+// has to smooth the scanline steps.
 const _scale = 8;
 const _grid = 1024.0;
 
-// How much of the canvas the mark occupies. The notification icon can run
-// close to the edge; the adaptive foreground must stay inside the centre
-// safe zone, since the system masks and shifts that layer.
-const _notificationInset = 0.82;
-const _adaptiveInset = 0.66;
+// The pi from STIX Two Math, scaled so its longer side is 600 of the 1024
+// grid and centred on it. Absolute moveto, lineto, curveto, closepath only.
+const _mark =
+    'M 812 269 L 812 251.6 L 424.7 251.6 '
+    'C 311.8 251.6 240.2 287.4 212 387.2 L 233.7 398.1 '
+    'C 268.4 339.5 292.3 338.4 419.2 338.4 '
+    'C 407.3 432.8 391 494.6 346.5 590.1 '
+    'C 312.9 663.9 304.2 676.9 264.1 746.4 L 267.3 762.6 L 369.3 762.6 '
+    'C 401.9 687.8 454 452.3 460.5 338.4 L 621 338.4 '
+    'C 602.6 437.1 574.4 558.7 574.4 647.6 '
+    'C 574.4 718.1 602.6 772.4 667.7 772.4 '
+    'C 733.9 772.4 768.6 737.7 797.9 682.3 L 780.5 667.2 '
+    'C 765.3 681.3 749.1 696.4 710 696.4 '
+    'C 664.4 696.4 647.1 649.8 647.1 572.8 '
+    'C 647.1 493.6 661.2 378.5 667.7 338.4 L 797.9 338.4 Z';
 
-class _Canvas {
-  _Canvas(this.size, this.glyphScale) : coverage = List<double>.filled(size * size, 0);
+// The mark's bounding box is 600 by 521, so its corners sit 397 from the
+// centre. The adaptive foreground has to keep them inside the centre safe
+// circle of radius 338, since the system masks and shifts that layer. The
+// notification icon has no mask, only a 24dp canvas to stay legible on.
+const _notificationScale = 1.44;
+const _adaptiveScale = 0.84;
 
-  final int size;
-  final double glyphScale;
-  final List<double> coverage;
+/// One straight segment of the flattened outline, in device pixels.
+class _Edge {
+  const _Edge(this.x1, this.y1, this.x2, this.y2);
 
-  // Maps a point on the 1024 design grid to canvas pixels, applying the
-  // centred scale this output wants.
-  double _map(double v) => ((v - _grid / 2) * glyphScale + _grid / 2) / _grid * size;
-
-  // Coverage is opacity, not a bitmask: the signal arcs are drawn at half
-  // strength so the pi reads as the subject and they read as a modifier,
-  // matching the source SVG. Keeping the maximum lets strokes overlap
-  // without compounding.
-  void _mark(int x, int y, double opacity) {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    final index = y * size + x;
-    if (opacity > coverage[index]) coverage[index] = opacity;
-  }
-
-  // Round-capped line, which is every stroke in this mark.
-  void line(double x1, double y1, double x2, double y2, double width, {double opacity = 1}) {
-    final ax = _map(x1), ay = _map(y1), bx = _map(x2), by = _map(y2);
-    final radius = width / 2 * glyphScale / _grid * size;
-    final steps = math.max(2, (math.sqrt(math.pow(bx - ax, 2) + math.pow(by - ay, 2)) * 2).ceil());
-    for (var i = 0; i <= steps; i++) {
-      final t = i / steps;
-      _disc(ax + (bx - ax) * t, ay + (by - ay) * t, radius, opacity);
-    }
-  }
-
-  void arc(double cx, double cy, double r, double from, double to, double width, {double opacity = 1}) {
-    final mcx = _map(cx), mcy = _map(cy);
-    final mr = r * glyphScale / _grid * size;
-    final radius = width / 2 * glyphScale / _grid * size;
-    final steps = math.max(8, (mr * 3).ceil());
-    for (var i = 0; i <= steps; i++) {
-      final angle = from + (to - from) * (i / steps);
-      _disc(mcx + math.cos(angle) * mr, mcy + math.sin(angle) * mr, radius, opacity);
-    }
-  }
-
-  void _disc(double cx, double cy, double r, double opacity) {
-    final minX = (cx - r).floor(), maxX = (cx + r).ceil();
-    final minY = (cy - r).floor(), maxY = (cy + r).ceil();
-    for (var y = minY; y <= maxY; y++) {
-      for (var x = minX; x <= maxX; x++) {
-        final dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-        if (dx * dx + dy * dy <= r * r) _mark(x, y, opacity);
-      }
-    }
-  }
+  final double x1, y1, x2, y2;
 }
 
-// Draws the mark at the supersampled size, then box-filters down to `target`.
-//
-// `arcOpacity` is 1 for the notification icon, which Android tints from alpha
-// alone: a half-strength arc there would fade rather than recede. The adaptive
-// foreground keeps the source artwork's hierarchy instead.
-Image _render(int target, double glyphScale, {double arcOpacity = 1}) {
-  final canvas = _Canvas(target * _scale, glyphScale);
+/// Flattens the path into edges, mapping design-grid units to a `size` pixel
+/// canvas with the glyph scaled about its centre.
+List<_Edge> _flatten(String path, int size, double glyphScale) {
+  // The grid is square and the scale uniform, so one mapping serves both
+  // axes.
+  double map(double v) =>
+      ((v - _grid / 2) * glyphScale + _grid / 2) / _grid * size;
 
-  // Pi: crossbar, left stem, right stem with its foot.
-  canvas.line(300, 330, 724, 330, 78);
-  canvas.line(424, 330, 424, 596, 78);
-  canvas.line(626, 330, 626, 554, 78);
-  canvas.arc(668, 554, 42, math.pi, math.pi / 2, 78);
-  canvas.line(668, 596, 696, 596, 78);
+  final tokens = RegExp(r'[MLCZ]|-?\d+(?:\.\d+)?')
+      .allMatches(path)
+      .map((m) => m.group(0)!)
+      .toList();
 
-  // Two signal arcs beneath it.
-  canvas.arc(512, 700, 122, math.pi * 0.18, math.pi * 0.82, 54, opacity: arcOpacity);
-  canvas.arc(512, 786, 258, math.pi * 0.22, math.pi * 0.78, 54, opacity: arcOpacity);
+  final edges = <_Edge>[];
+  var i = 0;
+  double sx = 0, sy = 0, cx = 0, cy = 0;
 
-  final out = Image(width: target, height: target, numChannels: 4);
+  double next() => map(double.parse(tokens[i++]));
+
+  void addLine(double x, double y) {
+    edges.add(_Edge(cx, cy, x, y));
+    cx = x;
+    cy = y;
+  }
+
+  while (i < tokens.length) {
+    final command = tokens[i++];
+    switch (command) {
+      case 'M':
+        cx = next();
+        cy = next();
+        sx = cx;
+        sy = cy;
+      case 'L':
+        addLine(next(), next());
+      case 'C':
+        final x0 = cx, y0 = cy;
+        final x1 = next(), y1 = next();
+        final x2 = next(), y2 = next();
+        final x3 = next(), y3 = next();
+        // Fixed subdivision: the longest curve here spans a few hundred
+        // pixels even on the largest canvas, so 64 chords stay well under a
+        // pixel of error.
+        const steps = 64;
+        for (var step = 1; step <= steps; step++) {
+          final t = step / steps, u = 1 - t;
+          final a = u * u * u;
+          final b = 3 * u * u * t;
+          final c = 3 * u * t * t;
+          final d = t * t * t;
+          addLine(
+            a * x0 + b * x1 + c * x2 + d * x3,
+            a * y0 + b * y1 + c * y2 + d * y3,
+          );
+        }
+      case 'Z':
+        addLine(sx, sy);
+      default:
+        throw FormatException('unexpected path token $command');
+    }
+  }
+  return edges;
+}
+
+/// Scanline-fills the mark and returns per-pixel ink coverage, 0 to 1.
+///
+/// Horizontal coverage comes from the exact span overlap and vertical
+/// coverage from `_scale` sample rows, which is what keeps the curves smooth
+/// at 24 pixels without a supersampled bitmap.
+List<double> _coverage(int target, double glyphScale) {
+  final size = target * _scale;
+  final edges = _flatten(_mark, size, glyphScale);
+  final coverage = List<double>.filled(target * target, 0);
   final area = _scale * _scale;
+  final xs = <double>[];
+  final dirs = <int>[];
+
+  for (var sy = 0; sy < size; sy++) {
+    final y = sy + 0.5;
+    xs.clear();
+    dirs.clear();
+    for (final e in edges) {
+      if (e.y1 == e.y2) continue;
+      // Half-open in y so a vertex shared by two edges counts once.
+      if ((e.y1 <= y) == (e.y2 <= y)) continue;
+      final t = (y - e.y1) / (e.y2 - e.y1);
+      xs.add(e.x1 + (e.x2 - e.x1) * t);
+      dirs.add(e.y2 > e.y1 ? 1 : -1);
+    }
+    if (xs.isEmpty) continue;
+
+    final order = List<int>.generate(xs.length, (i) => i)
+      ..sort((a, b) => xs[a].compareTo(xs[b]));
+    final row = sy ~/ _scale;
+    var winding = 0;
+    for (var i = 0; i < order.length - 1; i++) {
+      winding += dirs[order[i]];
+      if (winding == 0) continue;
+      final from = xs[order[i]], to = xs[order[i + 1]];
+      final first = from.floor().clamp(0, size - 1) ~/ _scale;
+      final last = to.ceil().clamp(0, size) ~/ _scale;
+      for (var col = first; col <= last && col < target; col++) {
+        final left = col * _scale.toDouble();
+        final overlap =
+            (to < left + _scale ? to : left + _scale) -
+            (from > left ? from : left);
+        if (overlap > 0) coverage[row * target + col] += overlap / area;
+      }
+    }
+  }
+  return coverage;
+}
+
+/// Renders the mark at `target` pixels square.
+///
+/// `background` is null for the transparent layers and an opaque grey level
+/// for the launcher tile, where the glyph has to sit on something.
+Image _render(int target, double glyphScale, {int? background}) {
+  final coverage = _coverage(target, glyphScale);
+  final out = Image(width: target, height: target, numChannels: 4);
   for (var y = 0; y < target; y++) {
     for (var x = 0; x < target; x++) {
-      // Sum coverage rather than count hits: a half-opacity stroke has to
-      // survive the downsample as half, not as a filled pixel.
-      var sum = 0.0;
-      for (var sy = 0; sy < _scale; sy++) {
-        for (var sx = 0; sx < _scale; sx++) {
-          final px = x * _scale + sx, py = y * _scale + sy;
-          sum += canvas.coverage[py * canvas.size + px];
-        }
+      final ink = coverage[y * target + x].clamp(0.0, 1.0);
+      if (background == null) {
+        out.setPixelRgba(x, y, 255, 255, 255, (ink * 255).round());
+      } else {
+        // Composite over the tile here rather than shipping a transparent
+        // glyph: the tile is what iOS uses, and iOS icons carry no alpha.
+        final value = (background + (255 - background) * ink).round();
+        out.setPixelRgba(x, y, value, value, value, 255);
       }
-      out.setPixelRgba(x, y, 255, 255, 255, (sum / area * 255).round());
     }
   }
   return out;
@@ -134,19 +202,23 @@ Image _render(int target, double glyphScale, {double arcOpacity = 1}) {
 
 void main() {
   for (final entry in _buckets.entries) {
-    final directory = Directory('android/app/src/main/res/drawable-${entry.key}');
+    final directory = Directory(
+      'android/app/src/main/res/drawable-${entry.key}',
+    );
     directory.createSync(recursive: true);
     File('${directory.path}/ic_notification.png')
-        .writeAsBytesSync(encodePng(_render(entry.value, _notificationInset)));
+        .writeAsBytesSync(encodePng(_render(entry.value, _notificationScale)));
   }
 
-  // The adaptive foreground comes from the same drawing rather than a second
-  // SVG, so changing the mark is one edit. flutter_launcher_icons consumes
-  // this PNG and writes the per-density copies itself.
+  // Both launcher assets come from the same drawing rather than a second
+  // source, so changing the mark is one edit. flutter_launcher_icons consumes
+  // these PNGs and writes the per-density copies itself.
   final assets = Directory('assets/icon');
   assets.createSync(recursive: true);
+  File('${assets.path}/omp-remote.png')
+      .writeAsBytesSync(encodePng(_render(1024, 1, background: 0)));
   File('${assets.path}/omp-remote-foreground.png')
-      .writeAsBytesSync(encodePng(_render(1024, _adaptiveInset, arcOpacity: 0.5)));
+      .writeAsBytesSync(encodePng(_render(1024, _adaptiveScale)));
 
   // The notification icon is named as a Dart string, so the release build's
   // resource shrinker finds no reference to it and strips it, leaving
@@ -161,6 +233,6 @@ void main() {
 
   stdout.writeln(
     'wrote ic_notification.png in ${_buckets.length} density buckets, '
-    'the adaptive foreground, and res/raw/keep.xml',
+    'the launcher tile, the adaptive foreground, and res/raw/keep.xml',
   );
 }

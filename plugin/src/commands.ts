@@ -677,7 +677,9 @@ const BASH_OUTPUT_COALESCE_MS = 100;
 
 function cmdBash(bridge: SessionBridge, config: RemoteConfig, args: unknown): CommandResult {
 	if (!config.allowBash) {
-		return fail("bash is disabled on this workstation (OMP_REMOTE_ALLOW_BASH is not set)");
+		return fail(
+			"bash is disabled on this workstation. Run /remote-omp config bash on there to allow it",
+		);
 	}
 	const record = asRecord(args);
 	if (!record) return fail('"args" must be an object with a "command" field');

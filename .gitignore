@@ -35,3 +35,6 @@ app/linux/
 
 .env
 .DS_Store
+
+# Read-only clones of other projects, kept around for reference only.
+.ref/

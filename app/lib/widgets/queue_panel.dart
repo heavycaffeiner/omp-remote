@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../theme.dart';
+import 'panel_shell.dart';
 
 /// Messages waiting for the agent to finish. None has reached the model, so
 /// each can still be rewritten or dropped. Always visible while the queue is
 /// non-empty: a prompt sent mid-turn is otherwise invisible until it runs.
-class QueuePanel extends StatelessWidget {
+/// Collapsed to one line with a count; expanded shows every queued message.
+class QueuePanel extends StatefulWidget {
   const QueuePanel({
     required this.queue,
     required this.onEdit,
@@ -21,46 +23,44 @@ class QueuePanel extends StatelessWidget {
   final void Function(String id) onRemove;
 
   @override
+  State<QueuePanel> createState() => _QueuePanelState();
+}
+
+class _QueuePanelState extends State<QueuePanel> {
+  bool _expanded = true;
+
+  @override
   Widget build(BuildContext context) {
+    final queue = widget.queue;
     if (queue.isEmpty) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final label = queue.length == 1
+        ? '1 message queued'
+        : '${queue.length} messages queued';
 
-    return Material(
-      color: scheme.secondaryContainer,
-      child: Column(
+    return PanelShell(
+      leading: Icon(
+        Icons.schedule_send_outlined,
+        size: 18,
+        color: scheme.onSurfaceVariant,
+      ),
+      title: Text(label, style: theme.textTheme.bodySmall),
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      semanticsLabel: _expanded
+          ? 'Hide queued messages'
+          : 'Show queued messages, $label',
+      expandedChild: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg,
-              AppSpacing.sm,
-              AppSpacing.lg,
-              AppSpacing.xs,
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.schedule_send_outlined,
-                  size: 18,
-                  color: scheme.onSecondaryContainer,
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  queue.length == 1
-                      ? '1 message queued'
-                      : '${queue.length} messages queued',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: scheme.onSecondaryContainer,
-                  ),
-                ),
-              ],
-            ),
-          ),
           for (final message in queue)
-            _QueueRow(message: message, onEdit: onEdit, onRemove: onRemove),
-          const SizedBox(height: AppSpacing.sm),
+            _QueueRow(
+              message: message,
+              onEdit: widget.onEdit,
+              onRemove: widget.onRemove,
+            ),
         ],
       ),
     );
@@ -117,37 +117,45 @@ class _QueueRow extends StatelessWidget {
     return Semantics(
       label: 'Queued: ${message.text}',
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm,
-                  vertical: AppSpacing.xs,
-                ),
-                child: Text(
-                  message.text,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSecondaryContainer,
-                  ),
+              child: Text(
+                message.text,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            SizedBox(
+              width: 48,
+              height: 48,
+              child: Semantics(
+                button: true,
+                label: 'Edit this message',
+                child: IconButton(
+                  tooltip: 'Edit this message',
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  color: scheme.onSurfaceVariant,
+                  onPressed: () => _promptForEdit(context),
                 ),
               ),
             ),
-            IconButton(
-              tooltip: 'Edit this message',
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              color: scheme.onSecondaryContainer,
-              onPressed: () => _promptForEdit(context),
-            ),
-            IconButton(
-              tooltip: 'Remove this message',
-              icon: const Icon(Icons.delete_outline, size: 18),
-              color: scheme.onSecondaryContainer,
-              onPressed: () => onRemove(message.id),
+            SizedBox(
+              width: 48,
+              height: 48,
+              child: Semantics(
+                button: true,
+                label: 'Remove this message',
+                child: IconButton(
+                  tooltip: 'Remove this message',
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  color: scheme.onSurfaceVariant,
+                  onPressed: () => onRemove(message.id),
+                ),
+              ),
             ),
           ],
         ),

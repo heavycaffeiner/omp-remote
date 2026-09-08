@@ -8,6 +8,13 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
 import type { LocalServer } from "./local-server.js";
+import {
+	DEFAULT_LOCAL_BIND,
+	DEFAULT_LOCAL_PORT,
+	isRelayUrl,
+	settingsPath,
+	type StoredSettings,
+} from "./settings.js";
 
 export interface PairingTarget {
 	transport: "direct" | "relay";
@@ -123,14 +130,16 @@ function resolvePairingToken(
 		if (!local) return { error: "the local server is not running" };
 		return { token: role === "control" ? local.tokens.control : local.tokens.viewer };
 	}
-	if (!config.relay) return { error: "no relay is configured (OMP_REMOTE_RELAY_URL is unset)" };
+	if (!config.relay) {
+		return { error: "no relay is configured. Run /remote-omp config relay <url> <token>" };
+	}
 
-	const envVar = role === "control" ? "OMP_REMOTE_CONTROL_TOKEN" : "OMP_REMOTE_VIEWER_TOKEN";
+	const field = role === "control" ? "control" : "viewer";
 	const relayVar = role === "control" ? "OMP_RELAY_CONTROL_TOKEN" : "OMP_RELAY_VIEWER_TOKEN";
 	const token = role === "control" ? config.relay.controlToken : config.relay.viewerToken;
 	if (!token) {
 		return {
-			error: `no ${role} token is configured for relay pairing. Set ${envVar} to the relay's ${relayVar}, or pair over direct instead. The agent token cannot be used here: it authenticates as an agent, not a client`,
+			error: `no ${role} token is configured for relay pairing. Run /remote-omp config relay ${field} <token> with the relay's ${relayVar}, or pair over direct instead. The agent token cannot be used here: it authenticates as an agent, not a client`,
 		};
 	}
 	return { token };
@@ -169,24 +178,186 @@ async function requestHostedPairing(port: number, role: "control" | "viewer"): P
 	}
 }
 
+/// What `/remote-omp` needs from the extension: the live config, the settings
+/// behind it, a way to persist a change, and the transports' current state.
+export interface RemoteOmpHost {
+	getConfig: () => RemoteConfig;
+	getSettings: () => StoredSettings;
+	updateSettings: (next: StoredSettings) => void;
+	getLocalServer: () => LocalServer | undefined;
+	relayConnected: () => boolean;
+}
+
+const CONFIG_USAGE = [
+	"Usage:",
+	"  /remote-omp config                       show the current settings",
+	"  /remote-omp config relay <url> <token>   route through a relay",
+	"  /remote-omp config relay control <token> client token for control links",
+	"  /remote-omp config relay viewer <token>  client token for viewer links",
+	"  /remote-omp config relay off             go back to direct only",
+	"  /remote-omp config port <number>         port the direct server binds",
+	"  /remote-omp config bind <address>        address the direct server binds",
+	"  /remote-omp config direct on|off         serve directly at all",
+	"  /remote-omp config bash on|off           allow remote shell commands",
+	"  /remote-omp config approval on|off       ask the phone to approve tools",
+].join("\n");
+
+/// Renders the settings a user can change, plus where they are stored. A
+/// token is never echoed: only whether one is set.
+function describeSettings(host: RemoteOmpHost): string {
+	const settings = host.getSettings();
+	const lines = ["omp-remote settings", ""];
+	if (settings.relay) {
+		lines.push(`  relay:     ${settings.relay.url} (${host.relayConnected() ? "connected" : "disconnected"})`);
+		lines.push(`  agent token: set`);
+		lines.push(`  control token: ${settings.relay.controlToken ? "set" : "not set"}`);
+		lines.push(`  viewer token:  ${settings.relay.viewerToken ? "set" : "not set"}`);
+	} else {
+		lines.push("  relay:     not configured (direct only)");
+	}
+	lines.push(
+		`  direct:    ${settings.localEnabled ? `on, ${settings.localBind}:${settings.localPort}` : "off"}`,
+		`  bash:      ${settings.allowBash ? "allowed" : "blocked"}`,
+		`  approval:  ${settings.remoteApproval ? "asked on the phone" : "workstation only"}`,
+		"",
+		`Stored in ${settingsPath()}`,
+		"",
+		CONFIG_USAGE,
+	);
+	return lines.join("\n");
+}
+
+function parseOnOff(word: string | undefined): boolean | undefined {
+	if (word === "on" || word === "true" || word === "1") return true;
+	if (word === "off" || word === "false" || word === "0") return false;
+	return undefined;
+}
+
+/// Applies one config change and returns what to show the user. Changing the
+/// port or the bind address only takes effect on the next start, since the
+/// listening socket is already bound; the reply says so rather than leaving
+/// the user to wonder.
+function runConfig(words: string[], host: RemoteOmpHost): string {
+	if (words.length === 0) return describeSettings(host);
+
+	const settings = host.getSettings();
+	const next: StoredSettings = { ...settings, relay: settings.relay ? { ...settings.relay } : undefined };
+	const key = (words[0] ?? "").toLowerCase();
+
+	switch (key) {
+		case "relay": {
+			const sub = (words[1] ?? "").toLowerCase();
+			if (sub === "off" || sub === "none") {
+				if (!next.relay) return "No relay was configured; nothing changed.";
+				next.relay = undefined;
+				host.updateSettings(next);
+				return "Relay cleared. This session serves directly only.";
+			}
+			if (sub === "control" || sub === "viewer") {
+				const token = words[2];
+				if (!next.relay) {
+					return "Configure the relay first: /remote-omp config relay <url> <token>";
+				}
+				if (!token) return `Missing token. ${CONFIG_USAGE}`;
+				if (sub === "control") next.relay.controlToken = token;
+				else next.relay.viewerToken = token;
+				host.updateSettings(next);
+				return `Relay ${sub} token saved. Pairing links for that role will now work.`;
+			}
+			const url = words[1];
+			const token = words[2];
+			if (!url || !token) return `Missing relay URL or token.\n\n${CONFIG_USAGE}`;
+			if (!isRelayUrl(url)) {
+				return `That is not a usable relay URL: ${url}. It must start with ws:// or wss://`;
+			}
+			// Role tokens belong to whichever relay issued them, so pointing at
+			// a different relay drops them rather than carrying them over.
+			const keepRoleTokens = next.relay?.url === url;
+			next.relay = {
+				url,
+				token,
+				controlToken: keepRoleTokens ? next.relay?.controlToken : undefined,
+				viewerToken: keepRoleTokens ? next.relay?.viewerToken : undefined,
+			};
+			host.updateSettings(next);
+			return [
+				`Relay set to ${url}. Connecting now.`,
+				"",
+				"Relay pairing links also need the relay's own client tokens:",
+				"  /remote-omp config relay control <token>",
+				"  /remote-omp config relay viewer <token>",
+			].join("\n");
+		}
+		case "port": {
+			const raw = words[1];
+			const port = Number.parseInt(raw ?? "", 10);
+			if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+				return `Not a port number: ${raw ?? "(missing)"}. Give a number from 1 to 65535.`;
+			}
+			next.localPort = port;
+			host.updateSettings(next);
+			return `Direct port set to ${port}. Restart omp for it to take effect (default is ${DEFAULT_LOCAL_PORT}).`;
+		}
+		case "bind": {
+			const address = words[1];
+			if (!address) return `Missing address.\n\n${CONFIG_USAGE}`;
+			next.localBind = address;
+			host.updateSettings(next);
+			return `Direct bind address set to ${address}. Restart omp for it to take effect (default is ${DEFAULT_LOCAL_BIND}).`;
+		}
+		case "direct": {
+			const value = parseOnOff((words[1] ?? "").toLowerCase());
+			if (value === undefined) return `Say on or off.\n\n${CONFIG_USAGE}`;
+			next.localEnabled = value;
+			host.updateSettings(next);
+			return `Direct serving ${value ? "enabled" : "disabled"}. Restart omp for it to take effect.`;
+		}
+		case "bash": {
+			const value = parseOnOff((words[1] ?? "").toLowerCase());
+			if (value === undefined) return `Say on or off.\n\n${CONFIG_USAGE}`;
+			next.allowBash = value;
+			host.updateSettings(next);
+			return value
+				? "Remote shell commands are now allowed. Anyone holding a control token can run commands on this machine."
+				: "Remote shell commands are now blocked.";
+		}
+		case "approval": {
+			const value = parseOnOff((words[1] ?? "").toLowerCase());
+			if (value === undefined) return `Say on or off.\n\n${CONFIG_USAGE}`;
+			next.remoteApproval = value;
+			host.updateSettings(next);
+			return `Tool approval ${value ? "will be asked on the phone when one is attached" : "stays on the workstation"}. Restart omp for it to take effect.`;
+		}
+		default:
+			return `Unknown setting "${key}".\n\n${CONFIG_USAGE}`;
+	}
+}
+
 // Registers the /remote-omp command (docs/protocol.md, "Pairing"):
 //   bare    -> control link, direct preferred when the local server is up, relay fallback
 //   viewer  -> viewer link instead of control
 //   relay   -> force the relay form even when the local server is up
+//   config  -> show or change the persisted settings
 export function registerRemoteOmpCommand(
 	pi: ExtensionAPI,
-	_bridge: SessionBridge,
-	config: RemoteConfig,
-	getLocalServer: () => LocalServer | undefined,
+	bridge: SessionBridge,
+	host: RemoteOmpHost,
 ): void {
-	const bridge = _bridge;
 	pi.registerCommand("remote-omp", {
-		description: "Pair the OMPRemote app with this session",
+		description: "Pair the OMPRemote app with this session, or configure it",
 		handler: async (argsText, ctx) => {
-			const arg = argsText.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-			const role: "control" | "viewer" = arg === "viewer" ? "viewer" : "control";
-			const forceRelay = arg === "relay";
-			const local = getLocalServer();
+			const words = argsText.trim().split(/\s+/).filter((word) => word.length > 0);
+			const first = words[0]?.toLowerCase() ?? "";
+
+			if (first === "config") {
+				ctx.ui.notify(runConfig(words.slice(1), host), "info");
+				return;
+			}
+
+			const config = host.getConfig();
+			const role: "control" | "viewer" = first === "viewer" ? "viewer" : "control";
+			const forceRelay = first === "relay";
+			const local = host.getLocalServer();
 
 			// A guest session has no server of its own: the host holds the port
 			// for the whole workstation. Ask it for a code naming this session,

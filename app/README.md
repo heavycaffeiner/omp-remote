@@ -16,16 +16,22 @@ under `CFBundleURLTypes`, the camera usage string the QR scanner needs,
 and the display name). Regenerating the rest is safe; regenerating those
 two loses the pairing entry points and the display name.
 
-The launcher icon is generated from `assets/icon/omp-remote.svg` (source
-of truth) and `assets/icon/omp-remote.png` (a 1024x1024 raster of it, plus
-`assets/icon/omp-remote-foreground.png`, the glyph alone inset to the
-centre 66 percent for the Android adaptive icon foreground) using the
-`flutter_launcher_icons` dev dependency configured in `pubspec.yaml`. The
-generated files under `android/app/src/main/res` and
+The mark is a single pi on a black square: the glyph from STIX Two Math,
+outlined onto a 1024 grid so it carries a real letterform and needs no font
+installed.
+`tool/generate_notification_icon.dart` is the raster source of truth: it
+fills that outline and writes `assets/icon/omp-remote.png` (the opaque tile),
+`omp-remote-foreground.png` (the glyph alone, scaled to fit the Android
+adaptive safe circle), and `ic_notification.png` in every density bucket.
+`assets/icon/omp-remote.svg` holds the same path; a change to the mark means
+changing both, since no Dart SVG rasterizer is available offline.
+
+`flutter_launcher_icons` then turns those two PNGs into the platform files.
+The generated files under `android/app/src/main/res` and
 `ios/Runner/Assets.xcassets` are gitignored along with the rest of the
 regenerable platform folders, so after `flutter create` regenerates
-`android/`, run `dart run flutter_launcher_icons` again to put the icon
-back; the release workflow does this automatically.
+`android/`, run the generator and then `dart run flutter_launcher_icons` to
+put the icon back; the release workflow does this automatically.
 
 ## Running on Android
 

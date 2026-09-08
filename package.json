@@ -12,7 +12,8 @@
 		"extensions": ["./plugin/src/index.ts"]
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit -p plugin"
+		"typecheck": "tsc --noEmit -p plugin",
+		"test": "bun test plugin/test"
 	},
 	"devDependencies": {
 		"@oh-my-pi/pi-agent-core": "^18.1.13",

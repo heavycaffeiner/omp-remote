@@ -66,7 +66,9 @@ void main() {
       final alpha = _alphaMean(image);
       // Android tints this from its alpha alone, so an opaque one is a block.
       if (alpha > 0.5) {
-        failures += _fail('notification icon is opaque and will tint to a solid square');
+        failures += _fail(
+          'notification icon is opaque and will tint to a solid square',
+        );
       }
       if (alpha < 0.005) {
         failures += _fail('notification icon is effectively empty');

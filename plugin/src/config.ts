@@ -1,8 +1,11 @@
-// Reads and validates OMP_REMOTE_* environment variables at the process boundary.
-// Nothing downstream re-reads process.env; everything flows through RemoteConfig.
+// Turns the persisted settings file into the config the transports run on.
+// Nothing downstream reads the file or the environment; everything flows
+// through RemoteConfig.
 
 import * as os from "node:os";
 import * as path from "node:path";
+
+import { loadSettings, type StoredSettings } from "./settings.js";
 
 export interface RelayConfig {
 	url: string;
@@ -23,6 +26,8 @@ export interface LocalServerConfig {
 export interface RemoteConfig {
 	agentId: string;
 	agentName: string;
+	/// Absent unless a relay was configured with `/remote-omp config relay`.
+	/// Direct serving is the default and needs no configuration at all.
 	relay: RelayConfig | undefined;
 	local: LocalServerConfig | undefined;
 	allowBash: boolean;
@@ -39,84 +44,28 @@ function defaultAgentId(): string {
 	return `${host}/${base}#${suffix}`;
 }
 
-function parseBoolEnv(value: string | undefined, defaultValue: boolean): boolean {
-	if (value === undefined) return defaultValue;
-	return value === "1" || value.toLowerCase() === "true";
-}
-
-// Returns undefined (dormant) when the relay URL is unset. Throws a descriptive
-// error only for a present-but-invalid configuration, which the caller reports
-// once through ctx.ui.notify rather than letting it surface as noise.
-function readRelayConfig(env: NodeJS.ProcessEnv): RelayConfig | undefined {
-	const url = env.OMP_REMOTE_RELAY_URL;
-	if (!url) return undefined;
-
-	let parsed: URL;
-	try {
-		parsed = new URL(url);
-	} catch {
-		throw new Error(`OMP_REMOTE_RELAY_URL is not a valid URL: ${url}`);
-	}
-	if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-		throw new Error(`OMP_REMOTE_RELAY_URL must be ws: or wss:, got ${parsed.protocol}`);
-	}
-
-	const token = env.OMP_REMOTE_TOKEN;
-	if (!token) {
-		throw new Error("OMP_REMOTE_TOKEN is required when OMP_REMOTE_RELAY_URL is set");
-	}
-
+/// Projects stored settings onto the running config. Every value is already
+/// validated by `parseSettings`, so this cannot fail.
+export function configFromSettings(settings: StoredSettings): RemoteConfig {
 	return {
-		url,
-		token,
-		controlToken: env.OMP_REMOTE_CONTROL_TOKEN || undefined,
-		viewerToken: env.OMP_REMOTE_VIEWER_TOKEN || undefined,
+		agentId: defaultAgentId(),
+		agentName: path.basename(process.cwd()),
+		relay: settings.relay
+			? {
+					url: settings.relay.url,
+					token: settings.relay.token,
+					controlToken: settings.relay.controlToken,
+					viewerToken: settings.relay.viewerToken,
+				}
+			: undefined,
+		local: settings.localEnabled
+			? { port: settings.localPort, bind: settings.localBind }
+			: undefined,
+		allowBash: settings.allowBash,
+		remoteApproval: settings.remoteApproval,
 	};
 }
 
-function readLocalConfig(env: NodeJS.ProcessEnv): LocalServerConfig | undefined {
-	if (env.OMP_REMOTE_LOCAL === "0") return undefined;
-
-	const portRaw = env.OMP_REMOTE_LOCAL_PORT;
-	let port = 8788;
-	if (portRaw !== undefined) {
-		const parsedPort = Number.parseInt(portRaw, 10);
-		if (!Number.isFinite(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
-			throw new Error(`OMP_REMOTE_LOCAL_PORT must be a valid port number, got ${portRaw}`);
-		}
-		port = parsedPort;
-	}
-
-	const bind = env.OMP_REMOTE_LOCAL_BIND ?? "0.0.0.0";
-	return { port, bind };
-}
-
-export class ConfigError extends Error {}
-
-export function readRemoteConfig(env: NodeJS.ProcessEnv = process.env): RemoteConfig {
-	let relay: RelayConfig | undefined;
-	try {
-		relay = readRelayConfig(env);
-	} catch (err) {
-		throw new ConfigError(err instanceof Error ? err.message : String(err));
-	}
-
-	let local: LocalServerConfig | undefined;
-	try {
-		local = readLocalConfig(env);
-	} catch (err) {
-		throw new ConfigError(err instanceof Error ? err.message : String(err));
-	}
-
-	const agentId = env.OMP_REMOTE_AGENT_ID ?? defaultAgentId();
-	const agentName = path.basename(process.cwd());
-
-	return {
-		agentId,
-		agentName,
-		relay,
-		local,
-		allowBash: parseBoolEnv(env.OMP_REMOTE_ALLOW_BASH, false),
-		remoteApproval: parseBoolEnv(env.OMP_REMOTE_REMOTE_APPROVAL, false),
-	};
+export function readRemoteConfig(): RemoteConfig {
+	return configFromSettings(loadSettings());
 }

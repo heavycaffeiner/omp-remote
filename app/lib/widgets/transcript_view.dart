@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../session_store.dart';
@@ -5,11 +7,23 @@ import '../theme.dart';
 import 'diff_view.dart';
 import 'markdown_text.dart';
 
-/// Renders the transcript. Only rebuilds the whole list when entries are
-/// added or removed (driven by [SessionStore.transcriptRevision]); each row
-/// listens to its own [TranscriptEntry.revision] so a streaming delta
-/// repaints just that row. Scroll position is pinned to the bottom only
-/// when the user was already there before new content arrived.
+/// Gap between transcript rows. One value, so the log has a single rhythm.
+const double _rowGap = 10;
+
+/// How close to the bottom still counts as following the tail.
+const double _tailSlack = 48;
+
+/// Size of the tiny uppercase role labels.
+const double _labelSize = 10;
+
+/// Renders the transcript as a log: a role label, then the content, at one
+/// left edge. Only rebuilds the whole list when entries are added or removed
+/// (driven by [SessionStore.transcriptRevision]); each row listens to its own
+/// [TranscriptEntry.revision] so a streaming delta repaints just that row.
+///
+/// The view follows new output while the user is at the bottom and stops the
+/// moment they scroll away, so reading back is never yanked out from under
+/// them. A button appears to jump back.
 class TranscriptView extends StatefulWidget {
   const TranscriptView({required this.sessionStore, super.key});
 
@@ -20,112 +34,311 @@ class TranscriptView extends StatefulWidget {
 }
 
 class _TranscriptViewState extends State<TranscriptView> {
-  final ScrollController _scrollController = ScrollController();
-  static const double _bottomThreshold = 64;
+  final ScrollController _scroll = ScrollController();
 
-  bool get _isAtBottom {
-    if (!_scrollController.hasClients) return true;
-    final position = _scrollController.position;
-    return position.pixels >= position.maxScrollExtent - _bottomThreshold;
-  }
+  /// True while the view should follow new output.
+  bool _following = true;
 
   @override
   void initState() {
     super.initState();
     widget.sessionStore.transcriptRevision.addListener(_onTranscriptChanged);
+    _scroll.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     widget.sessionStore.transcriptRevision.removeListener(_onTranscriptChanged);
-    _scrollController.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
+  bool get _atBottom {
+    if (!_scroll.hasClients) return true;
+    final position = _scroll.position;
+    return position.maxScrollExtent - position.pixels <= _tailSlack;
+  }
+
+  void _onScroll() {
+    final atBottom = _atBottom;
+    if (atBottom == _following) return;
+    setState(() => _following = atBottom);
+  }
+
   void _onTranscriptChanged() {
-    final wasAtBottom = _isAtBottom;
-    if (!wasAtBottom) return;
+    // Sampled before the rebuild: the layout that answers "was the user at
+    // the bottom?" is the one from before the new row was added.
+    if (!_following || !_atBottom) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      if (!mounted || !_scroll.hasClients || !_following) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
+  }
+
+  Future<void> _jumpToLatest() async {
+    if (!_scroll.hasClients) return;
+    setState(() => _following = true);
+    await _scroll.animateTo(
+      _scroll.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return ValueListenableBuilder<int>(
       valueListenable: widget.sessionStore.transcriptRevision,
       builder: (context, revision, _) {
         final entries = widget.sessionStore.entries;
-        if (entries.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.xl),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.forum_outlined,
-                    size: 40,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    'No messages yet',
-                    style: theme.textTheme.titleSmall,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'Type a message in the composer below and send it to '
-                    'start the conversation.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+        if (entries.isEmpty) return const _EmptyTranscript();
+        return Stack(
+          children: [
+            ListView.separated(
+              controller: _scroll,
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.sm,
+                AppSpacing.md,
+                AppSpacing.lg,
+              ),
+              itemCount: entries.length,
+              separatorBuilder: (context, index) => SizedBox(
+                // Consecutive rows from the same speaker keep a tighter gap
+                // so they read as one block.
+                height: _startsRun(entries, index + 1)
+                    ? _rowGap
+                    : AppSpacing.xs,
+              ),
+              itemBuilder: (context, index) => _TranscriptRow(
+                key: ValueKey(entries[index].id),
+                entry: entries[index],
+                showLabel: _startsRun(entries, index),
               ),
             ),
-          );
-        }
-        return ListView.builder(
-          controller: _scrollController,
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-          itemCount: entries.length,
-          itemBuilder: (context, index) => _TranscriptRow(
-            key: ValueKey(entries[index].id),
-            entry: entries[index],
-          ),
+            if (!_following)
+              Positioned(
+                right: AppSpacing.md,
+                bottom: AppSpacing.md,
+                child: FloatingActionButton.small(
+                  // The session screen owns no FAB, but a shared default hero
+                  // tag would still throw across a route transition.
+                  heroTag: null,
+                  onPressed: _jumpToLatest,
+                  tooltip: 'Jump to the latest output',
+                  child: const Icon(Icons.keyboard_arrow_down),
+                ),
+              ),
+          ],
         );
       },
     );
   }
 }
 
+/// Whether the entry at [index] starts a new run, which is what decides
+/// whether it draws a role label. Only two message rows from the same role
+/// form a run; a tool card or a notice always breaks it.
+bool _startsRun(List<TranscriptEntry> entries, int index) {
+  if (index <= 0 || index >= entries.length) return true;
+  final entry = entries[index];
+  final previous = entries[index - 1];
+  if (entry.kind != TranscriptKind.message) return true;
+  if (previous.kind != TranscriptKind.message) return true;
+  return previous.role != entry.role;
+}
+
+class _EmptyTranscript extends StatelessWidget {
+  const _EmptyTranscript();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Text(
+          'No activity yet',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Dispatches one entry to its renderer and repaints only on that entry's
+/// own revision.
 class _TranscriptRow extends StatelessWidget {
-  const _TranscriptRow({required this.entry, super.key});
+  const _TranscriptRow({
+    required this.entry,
+    required this.showLabel,
+    super.key,
+  });
 
   final TranscriptEntry entry;
+
+  /// Whether this row starts a run and therefore names its speaker.
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: entry.revision,
-      builder: (context, _) {
-        switch (entry.kind) {
-          case TranscriptKind.message:
-            return _MessageRow(entry: entry);
-          case TranscriptKind.tool:
-            return _ToolCard(entry: entry);
-          case TranscriptKind.notice:
-            return _NoticeLine(entry: entry);
-          case TranscriptKind.status:
-          case TranscriptKind.system:
-            return _SystemLine(entry: entry);
-        }
+      builder: (context, _) => switch (entry.kind) {
+        TranscriptKind.message => _MessageRow(
+          entry: entry,
+          showLabel: showLabel,
+        ),
+        TranscriptKind.tool => _ToolCard(entry: entry),
+        TranscriptKind.notice => _NoticeLine(entry: entry),
+        TranscriptKind.status ||
+        TranscriptKind.system => _MarkerRow(text: entry.text),
       },
+    );
+  }
+}
+
+/// Tiny uppercase label naming who produced the rows below it. A label costs
+/// one 14dp line and no horizontal space, where a fixed gutter costs the
+/// content width of every row in the transcript.
+class _RoleLabel extends StatelessWidget {
+  const _RoleLabel({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label.toUpperCase(),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: monospaceStyle(context, fontSize: _labelSize).copyWith(
+        color: color,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+        height: 1.4,
+      ),
+    );
+  }
+}
+
+/// One turn's worth of text. A prompt someone typed sits on a rounded
+/// surface so the turn boundary is obvious; agent output is deliberately
+/// card-less, since it dominates the transcript and a card around every turn
+/// would spend the phone's narrow content width on borders.
+class _MessageRow extends StatelessWidget {
+  const _MessageRow({required this.entry, required this.showLabel});
+
+  final TranscriptEntry entry;
+  final bool showLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final role = entry.role;
+
+    final (String label, bool boxed) = switch (role) {
+      'user' => ('you', true),
+      'assistant' => ('omp', false),
+      'system' => ('system', false),
+      'custom' || 'custom_message' => ('note', false),
+      'toolResult' => ('tool', false),
+      _ => (role, false),
+    };
+    final labelColor = role == 'user'
+        ? scheme.primary
+        : scheme.onSurfaceVariant;
+
+    // A label names a speaker for something they said. A row that carries
+    // only a collapsed thinking disclosure has no prose to attribute, and
+    // labelling it doubles the line count of a tool-heavy turn.
+    final hasProse = entry.text.trim().isNotEmpty;
+
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showLabel && hasProse) _RoleLabel(label: label, color: labelColor),
+        if (entry.thinking.isNotEmpty)
+          _ThinkingBlock(text: entry.thinking, open: entry.open),
+        for (final segment in _splitTagged(entry.text))
+          if (segment.tag != null)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.xs),
+              child: _TaggedBlock(tag: segment.tag!, text: segment.text),
+            )
+          else if (segment.text.isNotEmpty)
+            MarkdownText(
+              text: segment.text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
+        if (entry.open && entry.text.isEmpty) const _WorkingCursor(),
+      ],
+    );
+
+    return Semantics(
+      label: '$label${entry.open ? ", streaming" : ""}: ${entry.text}',
+      child: boxed
+          ? Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(AppRadius.medium),
+              ),
+              child: body,
+            )
+          : body,
+    );
+  }
+}
+
+/// Blinking caret shown while a turn is open but has produced no text yet,
+/// so an agent that is thinking never looks like an agent that has stalled.
+class _WorkingCursor extends StatefulWidget {
+  const _WorkingCursor();
+
+  @override
+  State<_WorkingCursor> createState() => _WorkingCursorState();
+}
+
+class _WorkingCursorState extends State<_WorkingCursor>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: 'Working',
+      child: FadeTransition(
+        opacity: _controller.drive(Tween<double>(begin: 0.25, end: 1)),
+        child: Container(
+          width: 8,
+          height: 14,
+          margin: const EdgeInsets.only(top: AppSpacing.xxs),
+          color: scheme.primary,
+        ),
+      ),
     );
   }
 }
@@ -147,7 +360,7 @@ class _CodeBlock extends StatelessWidget {
       padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(AppRadius.small),
+        borderRadius: BorderRadius.circular(AppRadius.extraSmall),
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -162,27 +375,85 @@ class _CodeBlock extends StatelessWidget {
   }
 }
 
-/// Renders a tool call's `input` payload as a short single-line summary for
-/// the collapsed header row.
+/// Renders a tool call's arguments as a short single-line summary for the
+/// collapsed header row.
+///
+/// The plugin sends arguments already stringified, so a raw payload is
+/// usually a JSON document. Printing that verbatim fills the header with
+/// quotes and braces, so it is decoded and reduced to the one value that
+/// actually identifies the call.
 String _summarizeToolInput(Object? input) {
   if (input == null) return '';
-  if (input is String) return input;
-  if (input is Map) {
-    return input.entries.map((e) => '${e.key}: ${e.value}').join(', ');
+  if (input is String) {
+    final trimmed = input.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return _summarizeToolInput(jsonDecode(trimmed));
+      } on FormatException {
+        // Truncated or not JSON after all; fall through to the raw text.
+      }
+    }
+    return _oneLine(input);
   }
-  if (input is List) return input.join(', ');
-  return input.toString();
+  if (input is Map) {
+    // The most identifying argument first: a header reading `id: 3` when the
+    // call also carries a path says nothing useful.
+    for (final key in const [
+      'path',
+      'file',
+      'command',
+      'pattern',
+      'query',
+      'task',
+      'url',
+    ]) {
+      final value = input[key];
+      if (value is String && value.trim().isNotEmpty) return _oneLine(value);
+    }
+    // Nested structures belong in the expanded arguments block, not here.
+    final scalars = input.entries
+        .where((e) => e.value is String || e.value is num || e.value is bool)
+        .map((e) => '${e.key}=${_oneLine(e.value.toString())}')
+        .join(' ');
+    if (scalars.isNotEmpty) return scalars;
+    return input.keys.join(' ');
+  }
+  if (input is List) return _oneLine(input.map(_scalarOrType).join(', '));
+  return _oneLine(input.toString());
 }
 
-/// Pretty-prints a tool's `input` payload for the expanded detail view.
+/// Renders a list element as itself when it is a scalar, else as its shape.
+String _scalarOrType(Object? value) => switch (value) {
+  String() || num() || bool() => value.toString(),
+  Map() => '{...}',
+  List() => '[...]',
+  _ => '',
+};
+
+/// Collapses whitespace so a multi-line argument fits on the header row.
+String _oneLine(String value) => value.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+/// Pretty-prints a tool's arguments for the expanded detail view. JSON is
+/// indented rather than shown as one long line, which is the only form a
+/// nested payload is readable in.
 String _formatToolInput(Object? input) {
   if (input == null) return '';
-  if (input is String) return input;
-  if (input is Map) {
-    return input.entries.map((e) => '${e.key}: ${e.value}').join('\n');
+  if (input is String) {
+    final trimmed = input.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return const JsonEncoder.withIndent('  ').convert(jsonDecode(trimmed));
+      } on FormatException {
+        // Truncated or not JSON after all; show it as it arrived.
+      }
+    }
+    return input;
   }
-  if (input is List) return input.map((e) => '- $e').join('\n');
-  return input.toString();
+  try {
+    return const JsonEncoder.withIndent('  ').convert(input);
+  } on JsonUnsupportedObjectError {
+    return input.toString();
+  }
 }
 
 /// One piece of a message body: either prose someone wrote or a block the
@@ -225,10 +496,10 @@ List<_Segment> _splitTagged(String text) {
   return segments;
 }
 
-/// A tagged block, set apart from the prose around it. Known tags get their
-/// own icon and accent; anything else falls back to the tag name with a
-/// neutral tag icon, so a tag nobody anticipated still reads as a block
-/// rather than as stray markup.
+/// A tagged block, set apart from the prose around it by a left rule and a
+/// label. Known tags get their own icon and accent; anything else falls back
+/// to the tag name with a neutral icon, so a tag nobody anticipated still
+/// reads as a block rather than as stray markup.
 class _TaggedBlock extends StatelessWidget {
   const _TaggedBlock({required this.tag, required this.text});
 
@@ -275,12 +546,9 @@ class _TaggedBlock extends StatelessWidget {
     };
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      padding: const EdgeInsets.all(AppSpacing.sm),
+      padding: const EdgeInsets.only(left: AppSpacing.sm),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh,
-        borderRadius: const BorderRadius.all(Radius.circular(AppRadius.small)),
-        border: Border(left: BorderSide(color: color, width: 3)),
+        border: Border(left: BorderSide(color: color, width: 2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -288,15 +556,11 @@ class _TaggedBlock extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 13, color: color),
+              Icon(icon, size: 12, color: color),
               const SizedBox(width: AppSpacing.xs),
-              Text(
-                label,
-                style: theme.textTheme.labelSmall?.copyWith(color: color),
-              ),
+              _RoleLabel(label: label, color: color),
             ],
           ),
-          const SizedBox(height: AppSpacing.xs),
           MarkdownText(
             text: text,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -309,134 +573,16 @@ class _TaggedBlock extends StatelessWidget {
   }
 }
 
-/// One log line: a gutter carrying the role, then the content. A transcript
-/// reads top to bottom at a single left edge, so alternating alignment and
-/// rounded bubbles only cost horizontal space and make long tool output
-/// harder to scan.
-class _MessageRow extends StatelessWidget {
-  const _MessageRow({required this.entry});
-
-  final TranscriptEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final role = entry.role;
-
-    final (String label, IconData icon, Color color) = switch (role) {
-      'user' => ('you', Icons.person_outline, scheme.primary),
-      'assistant' => ('omp', Icons.smart_toy_outlined, scheme.onSurface),
-      'system' => ('system', Icons.info_outline, scheme.onSurfaceVariant),
-      'custom' || 'custom_message' => (
-        'note',
-        Icons.sticky_note_2_outlined,
-        scheme.onSurfaceVariant,
-      ),
-      'toolResult' => ('tool', Icons.build_outlined, scheme.onSurfaceVariant),
-      _ => (role, Icons.chat_bubble_outline, scheme.onSurfaceVariant),
-    };
-
-    // A user line gets a tinted background so the eye can find the turn
-    // boundaries in a long log without relying on colour alone: the gutter
-    // label and icon differ too.
-    final isUser = role == 'user';
-
-    return Semantics(
-      label: '$label${entry.open ? ", streaming" : ""}: ${entry.text}',
-      child: Container(
-        color: isUser ? scheme.surfaceContainerHighest : null,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.sm,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Gutter(icon: icon, label: label, color: color),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (entry.thinking.isNotEmpty)
-                    _ThinkingBlock(
-                      text: entry.thinking,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  for (final segment in _splitTagged(entry.text))
-                    if (segment.tag != null)
-                      _TaggedBlock(tag: segment.tag!, text: segment.text)
-                    else if (segment.text.isNotEmpty)
-                      MarkdownText(
-                        text: segment.text,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                  if (entry.open) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    SizedBox(
-                      width: 72,
-                      height: 2,
-                      child: LinearProgressIndicator(
-                        minHeight: 2,
-                        backgroundColor: scheme.surfaceContainerHighest,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Fixed-width left column naming who produced the line. Fixed so every row
-/// aligns at the same content edge.
-class _Gutter extends StatelessWidget {
-  const _Gutter({required this.icon, required this.label, required this.color});
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  static const double width = 68;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 2, right: AppSpacing.sm),
-        child: Row(
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: AppSpacing.xs),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelSmall
-                    ?.copyWith(color: color, fontFamily: 'monospace'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
+/// Collapsed-by-default reasoning disclosure. Thinking is long and
+/// low-signal, so it never opens on its own and its collapsed form is one
+/// line: a chevron and a label, nothing else.
 class _ThinkingBlock extends StatefulWidget {
-  const _ThinkingBlock({required this.text, required this.color});
+  const _ThinkingBlock({required this.text, required this.open});
 
   final String text;
-  final Color color;
+
+  /// True while the turn is still streaming, which is when the label says so.
+  final bool open;
 
   @override
   State<_ThinkingBlock> createState() => _ThinkingBlockState();
@@ -447,7 +593,8 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final quietColor = widget.color.withValues(alpha: 0.6);
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -457,25 +604,24 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
           label: _expanded ? 'Collapse thinking' : 'Expand thinking',
           child: InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
+            // 28dp rather than 48: this is an inline disclosure inside a
+            // paragraph, and a 48dp row per thinking block would push the
+            // agent's actual answer off a phone screen. The row spans the
+            // full content width, so the target is easy to hit.
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
+              constraints: const BoxConstraints(minHeight: 28),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: quietColor,
+                    color: color,
                   ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Icon(Icons.psychology_outlined, size: 14, color: quietColor),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    'Thinking',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: quietColor,
-                      fontStyle: FontStyle.italic,
-                    ),
+                  const SizedBox(width: AppSpacing.xxs),
+                  _RoleLabel(
+                    label: widget.open ? 'thinking...' : 'thinking',
+                    color: color,
                   ),
                 ],
               ),
@@ -483,16 +629,21 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
           ),
         ),
         if (_expanded)
-          Padding(
+          Container(
+            width: double.infinity,
             padding: const EdgeInsets.only(
-              left: AppSpacing.lg,
-              top: AppSpacing.xs,
+              left: AppSpacing.sm,
               bottom: AppSpacing.xs,
+            ),
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: color, width: 2)),
             ),
             child: MarkdownText(
               text: widget.text,
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: quietColor, fontStyle: FontStyle.italic),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: color,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ),
       ],
@@ -500,11 +651,10 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
   }
 }
 
-/// Compact card for one tool call: name, argument summary, and a
-/// running/done/failed status with icon and word, always visible. Detail
-/// (full arguments and output) is collapsed by default behind a bounded,
-/// independently scrollable region so streaming output never resizes the
-/// card itself and never disturbs the transcript's scroll position.
+/// One tool invocation: a dense one-line header, then whatever detail the
+/// call produced. Built by hand rather than with `ExpansionTile`, which
+/// forces 48dp list-tile metrics and would make a transcript of a dozen
+/// calls unreadable on a phone.
 class _ToolCard extends StatefulWidget {
   const _ToolCard({required this.entry});
 
@@ -520,136 +670,189 @@ class _ToolCardState extends State<_ToolCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final entry = widget.entry;
-    final ok = entry.toolOk;
-    final IconData statusIcon;
-    final Color statusColor;
-    final String statusLabel;
-    if (entry.open) {
-      statusIcon = Icons.hourglass_top;
-      statusColor = theme.colorScheme.tertiary;
-      statusLabel = 'Running';
-    } else if (ok == false) {
-      statusIcon = Icons.error_outline;
-      statusColor = theme.colorScheme.error;
-      statusLabel = 'Failed';
-    } else {
-      statusIcon = Icons.check_circle_outline;
-      statusColor = theme.colorScheme.primary;
-      statusLabel = 'Done';
-    }
+    final failed = !entry.open && entry.toolOk == false;
+    final diff = entry.diff;
+    final hasDiff = diff != null && diff.isNotEmpty;
+
+    // A `Material` rather than a decorated `Container`: ink is painted by the
+    // nearest ancestor Material, so a container's clip cannot contain the
+    // press highlight and it spills over the rounded corners.
+    return Material(
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.small),
+        side: BorderSide(color: failed ? scheme.error : scheme.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm,
+                vertical: AppSpacing.xs,
+              ),
+              child: _header(context),
+            ),
+          ),
+          if (hasDiff)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                0,
+                AppSpacing.sm,
+                AppSpacing.sm,
+              ),
+              child: DiffView(diff: diff, maxHeight: _expanded ? 420 : 180),
+            ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                0,
+                AppSpacing.sm,
+                AppSpacing.sm,
+              ),
+              child: _detail(context),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Status, name, argument summary, and the disclosure chevron, on one line
+  /// at phone width.
+  Widget _header(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final entry = widget.entry;
     final name = entry.toolName ?? 'tool';
-    final summary = _summarizeToolInput(entry.toolInput);
-    final formattedInput = _formatToolInput(entry.toolInput);
+    // When the call changed a file, that path identifies it better than any
+    // argument does, and the collapsed card shows the path nowhere else.
+    final path = entry.path;
+    final summary = (path != null && path.isNotEmpty)
+        ? path
+        : _summarizeToolInput(entry.toolInput);
+    final statusLabel = entry.open
+        ? 'running'
+        : (entry.toolOk == false ? 'failed' : 'done');
 
     return Semantics(
       label:
-          'Tool $name, $statusLabel${summary.isNotEmpty ? ', $summary' : ''}',
-      child: Padding(
-        padding: const EdgeInsets.only(
-          left: _Gutter.width + AppSpacing.sm,
-          right: AppSpacing.sm,
-          top: AppSpacing.xs,
-          bottom: AppSpacing.xs,
-        ),
-        child: Card(
-          margin: EdgeInsets.zero,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(AppRadius.medium),
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48),
-                    child: Row(
-                      children: [
-                        Icon(Icons.build_outlined, size: 18),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(name, style: theme.textTheme.titleSmall),
-                              if (summary.isNotEmpty)
-                                Text(
-                                  summary,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Icon(statusIcon, color: statusColor, size: 18),
-                        const SizedBox(width: AppSpacing.xs),
-                        Text(
-                          statusLabel,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: statusColor,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.xs),
-                        Icon(
-                          _expanded ? Icons.expand_less : Icons.expand_more,
-                          size: 18,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ],
+          'Tool $name, $statusLabel'
+          '${summary.isNotEmpty ? ', $summary' : ''}. '
+          '${_expanded ? 'Collapse' : 'Expand'} detail',
+      child: Row(
+        children: [
+          _StatusDot(open: entry.open, ok: entry.toolOk),
+          const SizedBox(width: AppSpacing.sm),
+          // The name and the summary share one Expanded slot. Two sibling
+          // flexibles leave the slack at the end of the row, which floats the
+          // chevron away from the edge by however long the name happens to be.
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: monospaceStyle(context, fontSize: 12).copyWith(
+                      color: scheme.onSurface,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  // A file change is the point of the call, so its diff shows
-                  // whether the card is expanded or not.
-                  if (entry.diff != null && entry.diff!.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    if (entry.path != null)
-                      Text(
-                        entry.path!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: monospaceStyle(
-                          context,
-                        ).copyWith(color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                    const SizedBox(height: AppSpacing.xs),
-                    DiffView(
-                      diff: entry.diff!,
-                      maxHeight: _expanded ? 420 : 200,
+                ),
+                if (summary.isNotEmpty) ...[
+                  const SizedBox(width: AppSpacing.sm),
+                  Flexible(
+                    flex: 3,
+                    child: Text(
+                      summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: monospaceStyle(
+                        context,
+                        fontSize: 11,
+                      ).copyWith(color: scheme.onSurfaceVariant),
                     ),
-                  ],
-                  if (_expanded) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    if (formattedInput.isNotEmpty) ...[
-                      Text('Arguments', style: theme.textTheme.labelSmall),
-                      const SizedBox(height: AppSpacing.xs),
-                      _CodeBlock(text: formattedInput, maxHeight: 160),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
-                    if (entry.text.isNotEmpty) ...[
-                      Text('Output', style: theme.textTheme.labelSmall),
-                      const SizedBox(height: AppSpacing.xs),
-                      _CodeBlock(text: entry.text, maxHeight: 240),
-                    ] else if (entry.open)
-                      Text(
-                        'Waiting for output...',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
+                  ),
                 ],
-              ),
+              ],
             ),
           ),
-        ),
+          Icon(
+            _expanded ? Icons.expand_less : Icons.expand_more,
+            size: 18,
+            color: scheme.onSurfaceVariant,
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _detail(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final entry = widget.entry;
+    final formattedInput = _formatToolInput(entry.toolInput);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (formattedInput.isNotEmpty) ...[
+          _RoleLabel(label: 'arguments', color: scheme.onSurfaceVariant),
+          const SizedBox(height: AppSpacing.xxs),
+          _CodeBlock(text: formattedInput, maxHeight: 160),
+          const SizedBox(height: AppSpacing.sm),
+        ],
+        if (entry.text.isNotEmpty) ...[
+          _RoleLabel(label: 'output', color: scheme.onSurfaceVariant),
+          const SizedBox(height: AppSpacing.xxs),
+          _CodeBlock(text: entry.text, maxHeight: 240),
+        ] else if (entry.open)
+          Text(
+            'Waiting for output...',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Tool status as a small dot, with the state also in the parent's
+/// `Semantics` label so it never rests on colour alone.
+class _StatusDot extends StatelessWidget {
+  const _StatusDot({required this.open, required this.ok});
+
+  final bool open;
+  final bool? ok;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (open) {
+      return SizedBox(
+        width: 10,
+        height: 10,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.6,
+          color: scheme.tertiary,
+        ),
+      );
+    }
+    final failed = ok == false;
+    return Icon(
+      failed ? Icons.close : Icons.check,
+      size: 12,
+      color: failed ? scheme.error : scheme.primary,
     );
   }
 }
@@ -662,78 +865,57 @@ class _NoticeLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final level = entry.level ?? 'info';
-    final Color color;
-    final IconData icon;
-    switch (level) {
-      case 'error':
-        color = theme.colorScheme.error;
-        icon = Icons.error_outline;
-        break;
-      case 'warning':
-        color = theme.colorScheme.tertiary;
-        icon = Icons.warning_amber_outlined;
-        break;
-      default:
-        color = theme.colorScheme.onSurfaceVariant;
-        icon = Icons.info_outline;
-    }
+    final (IconData icon, Color color) = switch (level) {
+      'error' => (Icons.error_outline, scheme.error),
+      'warning' => (Icons.warning_amber_outlined, scheme.tertiary),
+      _ => (Icons.info_outline, scheme.onSurfaceVariant),
+    };
     return Semantics(
       label: 'Notice, $level: ${entry.text}',
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: MarkdownText(
-                text: entry.text,
-                style: theme.textTheme.bodySmall?.copyWith(color: color),
-              ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, size: 14, color: color),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: MarkdownText(
+              text: entry.text,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _SystemLine extends StatelessWidget {
-  const _SystemLine({required this.entry});
+/// Centred hairline marker for session events: a compaction, a branch, a
+/// model change. These are boundaries in the log, not messages in it.
+class _MarkerRow extends StatelessWidget {
+  const _MarkerRow({required this.text});
 
-  final TranscriptEntry entry;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    const line = Expanded(child: Divider());
     return Semantics(
-      label: entry.text,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-        child: Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.circle_outlined,
-                size: 10,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              Flexible(
-                child: Text(
-                  entry.text,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
+      label: text,
+      child: Row(
+        children: [
+          line,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            child: _RoleLabel(label: text, color: scheme.onSurfaceVariant),
           ),
-        ),
+          line,
+        ],
       ),
     );
   }

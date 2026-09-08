@@ -34,6 +34,7 @@ jobs:
           bun-version: "1.4.1"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - run: bun run test
 
   app:
     runs-on: ubuntu-latest
@@ -82,8 +83,8 @@ jobs:
       - name: Generate icons
         working-directory: app
         run: |
-          # The foreground asset must exist before flutter_launcher_icons
-          # consumes it, or the launcher icon lags a run behind the mark.
+          # Both source PNGs must exist before flutter_launcher_icons
+          # consumes them, or the launcher icon lags a run behind the mark.
           dart run tool/generate_notification_icon.dart
           dart run flutter_launcher_icons
           dart run tool/check_icons.dart

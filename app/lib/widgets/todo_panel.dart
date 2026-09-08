@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../theme.dart';
+import 'panel_shell.dart';
 
 /// The agent's todo list, always on screen while it has one. Collapsed it
-/// shows the active task and a count; expanded it shows every task grouped
-/// by phase. Driven by the live `todos` event, so it tracks edits within a
-/// turn rather than only at turn boundaries.
+/// is a single 40dp line showing the active task and a count; expanded it
+/// shows every task grouped by phase. Driven by the live `todos` event, so
+/// it tracks edits within a turn rather than only at turn boundaries.
 class TodoPanel extends StatefulWidget {
   const TodoPanel({required this.todos, super.key});
 
@@ -34,66 +35,45 @@ class _TodoPanelState extends State<TodoPanel> {
       ),
     );
 
-    return Material(
-      color: scheme.surfaceContainer,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return PanelShell(
+      leading: Icon(
+        Icons.checklist_rtl,
+        size: 18,
+        color: scheme.onSurfaceVariant,
+      ),
+      title: Row(
         children: [
-          Semantics(
-            button: true,
-            expanded: _expanded,
-            label: _expanded
-                ? 'Hide the task list'
-                : 'Show the task list, $done of ${widget.todos.length} done',
-            child: InkWell(
-              onTap: () => setState(() => _expanded = !_expanded),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.checklist_rtl,
-                      size: 18,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text(
-                      '$done/${widget.todos.length}',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        fontFamily: 'monospace',
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Text(
-                        active.content,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                    Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-                  ],
-                ),
-              ),
+          Text(
+            '$done/${widget.todos.length}',
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontFamily: 'monospace',
+              color: scheme.onSurfaceVariant,
             ),
           ),
-          if (_expanded)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 260),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _rows(context),
-                ),
-              ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              active.content,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
             ),
+          ),
         ],
+      ),
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      semanticsLabel: _expanded
+          ? 'Hide the task list'
+          : 'Show the task list, $done of ${widget.todos.length} done',
+      expandedChild: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 260),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: _rows(context),
+          ),
+        ),
       ),
     );
   }
@@ -107,11 +87,9 @@ class _TodoPanelState extends State<TodoPanel> {
         lastPhase = todo.phase;
         rows.add(
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg,
-              AppSpacing.sm,
-              AppSpacing.lg,
-              AppSpacing.xs,
+            padding: const EdgeInsets.only(
+              top: AppSpacing.xs,
+              bottom: AppSpacing.xxs,
             ),
             child: Text(
               todo.phase,
@@ -151,10 +129,7 @@ class _TodoRow extends StatelessWidget {
     return Semantics(
       label: '${todo.content}, ${todo.status.replaceAll("_", " ")}',
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.xs,
-        ),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

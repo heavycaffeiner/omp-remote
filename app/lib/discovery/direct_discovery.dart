@@ -58,7 +58,10 @@ class DiscoveredSession {
     final map = asMap(json);
     final agentId = asString(map['agentId']);
     if (agentId == null || agentId.isEmpty) return null;
-    return DiscoveredSession(agentId: agentId, name: asString(map['name']) ?? agentId);
+    return DiscoveredSession(
+      agentId: agentId,
+      name: asString(map['name']) ?? agentId,
+    );
   }
 }
 
@@ -105,7 +108,9 @@ class DiscoveredWorkstation {
     if (sessions.isEmpty) {
       final agent = asString(map['agent']);
       if (agent == null || agent.isEmpty) return null;
-      sessions.add(DiscoveredSession(agentId: agent, name: asString(map['name']) ?? agent));
+      sessions.add(
+        DiscoveredSession(agentId: agent, name: asString(map['name']) ?? agent),
+      );
     }
 
     return DiscoveredWorkstation(
@@ -141,7 +146,11 @@ Future<DiscoveredWorkstation?> discoverWorkstation(
       return null;
     }
     final body = await response.transform(utf8.decoder).join().timeout(timeout);
-    return DiscoveredWorkstation.fromJson(jsonDecode(body), host: host, port: port);
+    return DiscoveredWorkstation.fromJson(
+      jsonDecode(body),
+      host: host,
+      port: port,
+    );
   } catch (_) {
     return null;
   } finally {

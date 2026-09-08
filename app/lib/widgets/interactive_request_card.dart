@@ -101,14 +101,15 @@ class _InteractiveRequestCardState extends State<InteractiveRequestCard> {
       liveRegion: true,
       container: true,
       child: Card(
-        color: theme.colorScheme.primaryContainer,
-        margin: const EdgeInsets.all(AppSpacing.md),
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        color: theme.colorScheme.surfaceContainerHigh,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.large),
-          side: BorderSide(color: theme.colorScheme.primary, width: 2),
+          borderRadius: BorderRadius.circular(AppRadius.medium),
+          side: BorderSide(color: theme.colorScheme.outlineVariant, width: 1),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
+          padding: const EdgeInsets.all(AppSpacing.sm),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
@@ -117,16 +118,14 @@ class _InteractiveRequestCardState extends State<InteractiveRequestCard> {
                 children: [
                   Icon(
                     Icons.priority_high,
-                    color: theme.colorScheme.onPrimaryContainer,
+                    size: 20,
+                    color: theme.colorScheme.primary,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: AppSpacing.xs),
                   Expanded(
                     child: Text(
                       'Agent needs an answer',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: theme.colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: theme.textTheme.titleSmall,
                     ),
                   ),
                   if (_remaining != null)
@@ -143,13 +142,17 @@ class _InteractiveRequestCardState extends State<InteractiveRequestCard> {
                                 ? Icons.timer_off_outlined
                                 : Icons.timer_outlined,
                             size: 14,
-                            color: theme.colorScheme.onPrimaryContainer,
+                            color: _expired
+                                ? theme.colorScheme.error
+                                : theme.colorScheme.onSurfaceVariant,
                           ),
                           const SizedBox(width: AppSpacing.xs),
                           Text(
                             _expired ? 'expired' : '${_remaining!.inSeconds}s',
                             style: theme.textTheme.labelMedium?.copyWith(
-                              color: theme.colorScheme.onPrimaryContainer,
+                              color: _expired
+                                  ? theme.colorScheme.error
+                                  : theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -175,18 +178,10 @@ class _BodySurface extends StatelessWidget {
 
   final Widget child;
 
+  // The outer card already supplies the surface color, border, and padding;
+  // this wrapper only exists so every request body shares one call site.
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppRadius.medium),
-      ),
-      child: child,
-    );
-  }
+  Widget build(BuildContext context) => child;
 }
 
 class _SelectBody extends StatelessWidget {
@@ -214,42 +209,65 @@ class _SelectBody extends StatelessWidget {
             MarkdownText(text: request.message),
           ],
           const SizedBox(height: AppSpacing.sm),
-          for (var i = 0; i < request.options.length; i++) ...[
-            if (i > 0) const SizedBox(height: AppSpacing.sm),
-            Semantics(
-              button: true,
-              label:
-                  request.options[i].label +
-                  (request.options[i].description != null
-                      ? ', ${request.options[i].description}'
-                      : ''),
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md,
-                    vertical: AppSpacing.sm,
-                  ),
-                ),
-                onPressed: disabled ? null : () => onAnswer(selectResponse(i)),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(request.options[i].label),
-                      if (request.options[i].description != null)
-                        Text(
-                          request.options[i].description!,
-                          style: theme.textTheme.bodySmall,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 260),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: request.options.length,
+              separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.xs),
+              itemBuilder: (context, i) {
+                final option = request.options[i];
+                return Semantics(
+                  button: true,
+                  label:
+                      option.label +
+                      (option.description != null
+                          ? ', ${option.description}'
+                          : ''),
+                  child: Material(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(AppRadius.small),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppRadius.small),
+                      onTap: disabled
+                          ? null
+                          : () => onAnswer(selectResponse(i)),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: AppSpacing.xs,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                option.label,
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                              if (option.description != null)
+                                Text(
+                                  option.description!,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
+                          ),
                         ),
-                    ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
-          ],
+          ),
         ],
       ),
     );
