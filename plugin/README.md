@@ -228,16 +228,21 @@ no-op'ing or calling something that would throw at runtime:
 - `set_todos`, `set_auto_compaction`: same shape of gap. `AgentSession`
   exposes `setTodoPhases` / `setAutoCompactionEnabled`; `ExtensionContext`
   does not.
-- `branch` (by `entryId`): the extended lifecycle surface
-  (`ExtensionCommandContext.branch`, along with `newSession` and
-  `switchSession`) is documented as valid only from inside a slash-command
-  handler's own context, not the `ExtensionContext` a command dispatched off
-  a `command` wire frame runs with. `new_session` and `switch_session` fail
-  the same way and for the same reason.
+- `branch` (by `entryId`): needs `AgentSession`-level branch-by-entry
+  tracking that no extension surface exposes.
 - `run_command`: `ExtensionAPI` exposes no method to execute a slash
   command. Submitting `/name` through the prompt path was tried against a
   live session and does not work: the text reaches the model verbatim
   instead of being expanded, so the command never runs.
+
+`new_session`, `end_session`, and `switch_session` do work, by a narrower
+route: they need `ExtensionCommandContext`, which only a slash-command
+handler receives, so the bridge keeps the one `/remote` was last invoked
+with. `/remote` is how a session gets paired, so it is present whenever a
+client can ask; a session paired some other way gets an error naming what to
+run. `ctx.shutdown()` is not that route: it is documented as a request the
+host may ignore, and it is ignored in both TUI and RPC mode, so ending a
+session leaves it for a fresh one instead.
 
 Role model assignments are reachable, by a different route: they are
 settings, not session state, so `src/model-roles.ts` reaches the live
@@ -262,11 +267,14 @@ session can do.
 Two more gaps worth knowing about, both already reflected in the code
 without changing wire behavior:
 
-- `notice`, `model_changed`, and `thinking_changed` wire events have no
-  dedicated `pi.on(...)` source; `notice` is only emitted by this plugin's
-  own diagnostics, and model/thinking-change events would need to be
-  synthesized by diffing state at turn boundaries (not yet wired, since
-  nothing currently emits them).
+- `notice` has no dedicated `pi.on(...)` source; it is only emitted by this
+  plugin's own diagnostics. `model_changed` and `thinking_changed` are
+  emitted by the commands that make those changes, since a client watching
+  the session should not have to wait for a turn boundary to see one.
 - The `queued` field in the state snapshot reports presence
   (`ctx.hasPendingMessages()`, a boolean), not the real queued-message
-  count: `ExtensionContext` has no counter, only a boolean.
+  count: `ExtensionContext` has no counter, and
+  `AgentSession.getQueuedMessages()` is not reachable, so the queue's
+  contents cannot be read or edited from here. A mid-turn prompt is queued
+  as `steer`, which keeps it in the queue the workstation renders and can
+  edit while still delivering it at the agent's next step.
