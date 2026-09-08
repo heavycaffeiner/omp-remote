@@ -130,30 +130,42 @@ class _TranscriptViewState extends State<TranscriptView> {
             // row. Per-row regions cost 44ms against 22ms to first render a
             // replayed session; copying still works from this one.
             SelectionArea(
-              child: ListView.separated(
-                controller: _scroll,
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                  AppSpacing.md,
-                  AppSpacing.lg,
-                ),
-                itemCount: entries.length,
-                separatorBuilder: (context, index) => SizedBox(
-                  // Consecutive rows from the same speaker keep a tighter gap
-                  // so they read as one block.
-                  height: _startsRun(entries, index + 1)
-                      ? _rowGap
-                      : AppSpacing.xs,
-                ),
-                itemBuilder: (context, index) => _TranscriptRow(
-                  key: ValueKey(entries[index].id),
-                  entry: entries[index],
-                  showLabel: _labelsRun(entries, index),
-                  cwd: widget.sessionStore.state?.cwd,
-                  // A streaming delta only bumps its own row's revision, so
-                  // the last row has to re-pin the tail itself as it grows.
-                  onGrew: index == entries.length - 1 ? _pinTail : null,
+              // The scroll extent also changes with no scroll event and no
+              // rebuild of the last row: rows laying out for the first time,
+              // and a streaming row growing while the viewport is elsewhere.
+              // A lazy list does not build the last row from the top of a
+              // long transcript, so without this the tail is never pinned and
+              // new output accumulates below the fold.
+              child: NotificationListener<ScrollMetricsNotification>(
+                onNotification: (_) {
+                  _pinTail();
+                  return false;
+                },
+                child: ListView.separated(
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                    AppSpacing.md,
+                    AppSpacing.lg,
+                  ),
+                  itemCount: entries.length,
+                  separatorBuilder: (context, index) => SizedBox(
+                    // Consecutive rows from the same speaker keep a tighter
+                    // gap so they read as one block.
+                    height: _startsRun(entries, index + 1)
+                        ? _rowGap
+                        : AppSpacing.xs,
+                  ),
+                  itemBuilder: (context, index) => _TranscriptRow(
+                    key: ValueKey(entries[index].id),
+                    entry: entries[index],
+                    showLabel: _labelsRun(entries, index),
+                    cwd: widget.sessionStore.state?.cwd,
+                    // A streaming delta only bumps its own row's revision, so
+                    // the last row re-pins the tail itself while it is built.
+                    onGrew: index == entries.length - 1 ? _pinTail : null,
+                  ),
                 ),
               ),
             ),
