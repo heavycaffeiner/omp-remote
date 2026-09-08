@@ -213,6 +213,21 @@ and it can be cancelled with `abort_bash`. This is a remote shell, not a
 sandboxed one; treat the control token as workstation-root-adjacent once
 `allowBash` is turned on.
 
+## Do not run two copies
+
+`omp plugin install` and `--extension <path>` load independently, so doing
+both runs the plugin twice in one process. Both copies build a session
+bridge and try the same port; one wins it and the other does not, which
+splits the session across two objects that do not share state. It looks
+like a protocol bug rather than a setup mistake: pushed `state` frames come
+from one bridge while a `state` command is answered by the other, so
+`viewers` disagrees with itself, a raised request is missing from the
+snapshot that carries it, and a phone attaches to an agent whose events are
+coming from the copy it is not talking to.
+
+If any of that appears, run `omp plugin list` first. One copy, either way
+of loading it, and the symptoms go away.
+
 ## Known API gaps
 
 A handful of wire commands name behavior that the real `ExtensionAPI` /
