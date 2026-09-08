@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
 import { BTW_TASK, OMFG_TASK, runSideTask, type SideTask } from "./btw.js";
+import { listModelRoles, setModelRole } from "./model-roles.js";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
 
@@ -135,6 +136,8 @@ async function dispatch(
 
 		case "set_model":
 			return cmdSetModel(bridge, pi, args);
+		case "set_model_role":
+			return cmdSetModelRole(bridge, args);
 		case "set_thinking":
 			return cmdSetThinking(bridge, pi, args);
 		case "set_active_tools":
@@ -441,13 +444,58 @@ function cmdCommands(): CommandResult {
 	return ok({ commands: APP_COMMANDS.map((entry) => ({ ...entry, source: "builtin" })) });
 }
 
+// Every authenticated model, with enough of each row for a phone to choose
+// one without guessing from an id: the display name, whether it reasons, and
+// its context window. The role assignments ride along, so the settings
+// screen renders both halves of "which model" from one round trip.
 function cmdModels(bridge: SessionBridge): CommandResult {
 	const ctxResult = requireCtx(bridge);
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 	const ctx = ctxResult;
-	const models = ctx.models.list().map((m) => ({ provider: m.provider, id: m.id }));
+	const models = ctx.models.list().map((m) => ({
+		provider: m.provider,
+		id: m.id,
+		name: m.name,
+		reasoning: m.reasoning,
+		contextWindow: m.contextWindow ?? undefined,
+		image: m.input.includes("image"),
+	}));
 	const current = ctx.models.current();
-	return ok({ models, current: current ? { provider: current.provider, id: current.id } : undefined });
+	return ok({
+		models,
+		current: current ? { provider: current.provider, id: current.id } : undefined,
+		roles: listModelRoles(ctx),
+	});
+}
+
+// A role assignment is settings, not session state: it lands in config.yml
+// through the live singleton the running session reads, so the next turn
+// resolves `@<role>` to the new model and the workstation's own UI sees the
+// same change.
+function cmdSetModelRole(bridge: SessionBridge, args: unknown): CommandResult {
+	const record = asRecord(args);
+	if (!record) return fail('"args" must be an object with a "role" field');
+	const role = requireString(record, "role");
+	if (isErrorResult(role)) return fail(role.error);
+
+	const rawModel = record.model;
+	if (rawModel !== undefined && rawModel !== null && typeof rawModel !== "string") {
+		return fail('"model" must be a string or omitted to clear the role');
+	}
+	const model = typeof rawModel === "string" && rawModel.length > 0 ? rawModel : undefined;
+
+	const ctxResult = requireCtx(bridge);
+	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
+	const ctx = ctxResult;
+
+	const outcome = setModelRole(ctx, role, model);
+	if ("error" in outcome) return fail(outcome.error);
+
+	// A role assignment can change what the current turn's `default` resolves
+	// to, so the state snapshot is refreshed for every attached client, not
+	// only the one that made the change.
+	bridge.emitState();
+	return ok({ ...outcome, roles: listModelRoles(ctx) });
 }
 
 function cmdSystemPrompt(bridge: SessionBridge): CommandResult {
@@ -477,7 +525,15 @@ async function cmdSetModel(bridge: SessionBridge, pi: ExtensionAPI, args: unknow
 
 	const success = await pi.setModel(resolved);
 	if (!success) return fail(`no API key available for ${provider}/${id}`);
-	return ok({ model: { provider: resolved.provider, id: resolved.id } });
+
+	// The change takes hold on the next turn, so the clients watching this
+	// session are told now rather than at the next turn boundary, which could
+	// be minutes away. Without this a phone keeps showing the old model and
+	// the user cannot tell whether the tap did anything.
+	const model = { provider: resolved.provider, id: resolved.id };
+	bridge.broadcastEvent({ k: "model_changed", model });
+	bridge.emitState();
+	return ok({ model });
 }
 
 function cmdSetThinking(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): CommandResult {
@@ -493,6 +549,8 @@ function cmdSetThinking(bridge: SessionBridge, pi: ExtensionAPI, args: unknown):
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 
 	pi.setThinkingLevel(THINKING_LEVEL_BY_WIRE[level as (typeof THINKING_LEVELS)[number]]);
+	bridge.broadcastEvent({ k: "thinking_changed", thinkingLevel: level });
+	bridge.emitState();
 	return ok({ thinkingLevel: level });
 }
 

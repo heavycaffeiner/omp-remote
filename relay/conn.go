@@ -13,9 +13,10 @@ import (
 
 const (
 	maxMessageBytes = 1 << 20 // 1 MiB
-	readTimeout     = 60 * time.Second
-	pingInterval    = 20 * time.Second
-	writeTimeout    = 10 * time.Second
+	// Only the first frame is deadlined; see readFrame.
+	helloTimeout = 15 * time.Second
+	pingInterval = 20 * time.Second
+	writeTimeout = 10 * time.Second
 
 	statusTooSlow          = websocket.StatusPolicyViolation
 	statusProtocolMismatch = websocket.StatusPolicyViolation
@@ -110,10 +111,23 @@ func (o *outConn) pinger() {
 	}
 }
 
-// readFrame reads one message under the protocol's read deadline and size
-// limit.
+// readFrame blocks for the next message under the protocol's size limit.
+//
+// There is deliberately no read deadline. A client that is only watching a
+// session, and an agent whose session is idle, both send nothing for minutes
+// at a time; a per-read deadline closed exactly those connections once a
+// minute, and each reconnect replayed the session again. Liveness is the
+// pinger's job: Ping waits for the pong and closes the connection when it
+// does not come.
 func readFrame(ws *websocket.Conn) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	_, raw, err := ws.Read(context.Background())
+	return raw, err
+}
+
+// readHelloFrame reads the first frame under a deadline: a connection that
+// authenticates and then says nothing must not sit here holding a slot.
+func readHelloFrame(ws *websocket.Conn) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
 	defer cancel()
 	_, raw, err := ws.Read(ctx)
 	return raw, err
@@ -168,7 +182,7 @@ func runAgentConn(hub *Hub, ws *websocket.Conn) {
 	go oc.writePump()
 	go oc.pinger()
 
-	raw, err := readFrame(ws)
+	raw, err := readHelloFrame(ws)
 	if err != nil {
 		oc.closeAsync(websocket.StatusProtocolError, "no hello received")
 		return
@@ -266,7 +280,7 @@ func runClientConn(hub *Hub, ws *websocket.Conn, role Role) {
 	go oc.writePump()
 	go oc.pinger()
 
-	raw, err := readFrame(ws)
+	raw, err := readHelloFrame(ws)
 	if err != nil {
 		oc.closeAsync(websocket.StatusProtocolError, "no hello received")
 		return

@@ -67,8 +67,8 @@ List<DiffLine> parseUnifiedDiff(String diff) {
 
 /// A unified diff, rendered with a tinted background and a `+`/`-` gutter per
 /// line. The marker is drawn as its own column so a change reads without
-/// relying on colour, and long lines scroll horizontally instead of wrapping
-/// mid-token.
+/// relying on colour, and long lines wrap under the gutter rather than
+/// running off the right edge.
 class DiffView extends StatelessWidget {
   const DiffView({required this.diff, this.maxHeight = 320, super.key});
 
@@ -122,12 +122,9 @@ class DiffView extends StatelessWidget {
               ),
             ),
             child: SingleChildScrollView(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [for (final line in lines) _DiffRow(line: line)],
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [for (final line in lines) _DiffRow(line: line)],
               ),
             ),
           ),
@@ -192,7 +189,11 @@ class _DiffRow extends StatelessWidget {
               ),
             ),
           SizedBox(width: 14, child: Text(marker, style: style)),
-          Text(line.text, style: style, softWrap: false),
+          // Wrapped, not scrolled sideways: a phone is narrower than almost
+          // every code line, and a horizontal scroller hid the end of the
+          // line behind a gesture nothing advertised. Continuation lands
+          // under the text column, past the number and marker gutters.
+          Expanded(child: Text(line.text, style: style)),
         ],
       ),
     );

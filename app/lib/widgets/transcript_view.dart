@@ -122,6 +122,7 @@ class _TranscriptViewState extends State<TranscriptView> {
                 key: ValueKey(entries[index].id),
                 entry: entries[index],
                 showLabel: _labelsRun(entries, index),
+                cwd: widget.sessionStore.state?.cwd,
                 // A streaming delta only bumps its own row's revision, so the
                 // last row has to re-pin the tail itself as it grows taller.
                 onGrew: index == entries.length - 1 ? _pinTail : null,
@@ -203,6 +204,7 @@ class _TranscriptRow extends StatelessWidget {
   const _TranscriptRow({
     required this.entry,
     required this.showLabel,
+    this.cwd,
     this.onGrew,
     super.key,
   });
@@ -211,6 +213,10 @@ class _TranscriptRow extends StatelessWidget {
 
   /// Whether this row names its speaker.
   final bool showLabel;
+
+  /// The session's working directory, used to print a path a phone can read:
+  /// an absolute path spends its width on a prefix every row shares.
+  final String? cwd;
 
   /// Called on every repaint of this row. Set only on the last row, whose
   /// height is what the viewport has to keep up with while it streams.
@@ -227,7 +233,7 @@ class _TranscriptRow extends StatelessWidget {
             entry: entry,
             showLabel: showLabel,
           ),
-          TranscriptKind.tool => _ToolCard(entry: entry),
+          TranscriptKind.tool => _ToolCard(entry: entry, cwd: cwd),
           TranscriptKind.notice => _NoticeLine(entry: entry),
           TranscriptKind.status ||
           TranscriptKind.system => _MarkerRow(text: entry.text),
@@ -374,10 +380,12 @@ class _WorkingCursorState extends State<_WorkingCursor>
   }
 }
 
-/// A block of text rendered monospace with horizontal scroll instead of
-/// wrapping (for code, tool arguments, and tool output), and selectable.
-/// Wrapping it in an unconstrained horizontal scroller keeps long single
-/// lines intact instead of forcing them to break mid-token.
+/// A block of text rendered monospace and selectable, wrapping long lines.
+///
+/// It scrolled horizontally once, to keep a long line intact. On a phone
+/// that hid the end of every line behind a gesture nothing advertised, so it
+/// wraps: nothing on screen is cut off, and the text is still selectable in
+/// full.
 class _CodeBlock extends StatelessWidget {
   const _CodeBlock({required this.text, this.maxHeight});
 
@@ -393,10 +401,7 @@ class _CodeBlock extends StatelessWidget {
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppRadius.extraSmall),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SelectableText(text, style: monospaceStyle(context)),
-      ),
+      child: SelectableText(text, style: monospaceStyle(context)),
     );
     if (maxHeight == null) return box;
     return ConstrainedBox(
@@ -682,14 +687,25 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
   }
 }
 
+/// Rewrites a path inside [cwd] as a path relative to it, and leaves
+/// anything else alone. Applied to a whole argument summary too, since a
+/// `bash` command line is mostly absolute paths.
+String? _relativeToCwd(String? text, String? cwd) {
+  if (text == null || cwd == null || cwd.isEmpty || cwd == '/') return text;
+  final prefix = cwd.endsWith('/') ? cwd : '$cwd/';
+  if (!text.contains(prefix)) return text;
+  return text.replaceAll(prefix, '');
+}
+
 /// One tool invocation: a dense one-line header, then whatever detail the
 /// call produced. Built by hand rather than with `ExpansionTile`, which
 /// forces 48dp list-tile metrics and would make a transcript of a dozen
 /// calls unreadable on a phone.
 class _ToolCard extends StatefulWidget {
-  const _ToolCard({required this.entry});
+  const _ToolCard({required this.entry, this.cwd});
 
   final TranscriptEntry entry;
+  final String? cwd;
 
   @override
   State<_ToolCard> createState() => _ToolCardState();
@@ -765,10 +781,14 @@ class _ToolCardState extends State<_ToolCard> {
     final name = entry.toolName ?? 'tool';
     // When the call changed a file, that path identifies it better than any
     // argument does, and the collapsed card shows the path nowhere else.
-    final path = entry.path;
+    // Printed relative to the session's directory: the absolute form spent
+    // most of a phone's width on a prefix every row shares, and then
+    // ellipsized the filename, which is the part that identifies the call.
+    final path = _relativeToCwd(entry.path, widget.cwd);
     final summary = (path != null && path.isNotEmpty)
         ? path
-        : _summarizeToolInput(entry.toolInput);
+        : _relativeToCwd(_summarizeToolInput(entry.toolInput), widget.cwd) ??
+              '';
     final statusLabel = entry.open
         ? 'running'
         : (entry.toolOk == false ? 'failed' : 'done');

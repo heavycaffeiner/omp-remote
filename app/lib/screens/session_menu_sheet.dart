@@ -133,7 +133,7 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                       builder: (_) => ModelScreen(
                         relayClient: widget.relayClient,
                         canControl: widget.canControl,
-                        state: state,
+                        sessionStore: widget.sessionStore,
                       ),
                     ),
                   );

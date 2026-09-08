@@ -45,3 +45,13 @@ The relay trusts the `agentId` an agent claims at `hello`. Anyone holding the
 agent token can register as any agent id, including one already in use (the
 existing connection is evicted). Treat the agent token as a workstation
 credential and run a separate relay deployment per trust domain.
+
+## Keepalive
+
+The relay pings every peer every 20 seconds and waits up to 10 seconds for
+the pong, closing the connection when it does not come. That is the only
+liveness check: reads have no deadline, because a client that is watching a
+session and an agent whose session is idle both send nothing for minutes at
+a time, and a per-read deadline closed exactly those connections once a
+minute. Only the first frame is deadlined, at 15 seconds, so a connection
+that authenticates and then says nothing does not hold a slot.

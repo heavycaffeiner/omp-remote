@@ -123,7 +123,10 @@ class RelayClient {
   StreamSubscription<Object?>? _subscription;
   Timer? _reconnectTimer;
   int _backoffSeconds = 1;
-  static const int _maxBackoffSeconds = 30;
+  // A phone waiting on a workstation that is restarting should not sit out
+  // half a minute; one TCP attempt every ten seconds costs nothing, and a
+  // return to the foreground retries at once regardless.
+  static const int _maxBackoffSeconds = 10;
   bool _closed = false;
   int _generation = 0;
 
@@ -177,6 +180,35 @@ class RelayClient {
     _backoffSeconds = 1;
     _closed = false;
     await _connectOnce();
+  }
+
+  /// Called when the app returns to the foreground.
+  ///
+  /// Two separate delays used to be waited out on the phone rather than on
+  /// the workstation. A socket that died while the process was suspended is
+  /// not noticed until a ping fails, twenty seconds of staring at a screen
+  /// that is no longer live; and a scheduled retry may be sitting on a
+  /// backoff of up to thirty seconds that the user is now waiting out for no
+  /// reason. Coming back to the app is evidence that waiting is over.
+  void resume() {
+    if (_closed) return;
+    if (_status.phase != ConnectionPhase.connected) {
+      unawaited(retryNow());
+      return;
+    }
+    unawaited(_probe());
+  }
+
+  /// Asks the workstation for the state it already sends unprompted. The
+  /// reply is discarded: what matters is whether one arrives, since a
+  /// suspended socket answers nothing and needs replacing.
+  Future<void> _probe() async {
+    try {
+      await sendCommand(CommandName.state, timeout: const Duration(seconds: 4));
+    } catch (_) {
+      if (_closed) return;
+      await retryNow();
+    }
   }
 
   Uri _clientUri(Uri origin) =>
@@ -285,6 +317,14 @@ class RelayClient {
       jsonEncode(buildHelloFrame(clientId: _clientId, name: profile.name)),
     );
 
+    // Subscribing in the same write as `hello` instead of waiting for
+    // `welcome`: both transports read a client's frames in order, so the
+    // round trip spent waiting bought nothing and delayed the replay that
+    // fills the screen. The roster is still needed for a session switch,
+    // but not for attaching to the session pairing already named.
+    final known = profile.agentId;
+    if (known != null) _sendSubscribe(known);
+
     _subscription = channel.stream.listen(
       (message) => _handleMessage(generation, message),
       onDone: () {
@@ -355,16 +395,19 @@ class RelayClient {
             clearError: true,
           ),
         );
-        // Pairing usually names the target. When it did not, a lone roster
-        // entry is the only unambiguous choice; with several the user picks
-        // one from the switch sheet. This goes through subscribeToAgent
-        // rather than _sendSubscribe because commands and request answers
-        // read profile.agentId, and leaving it null receives events but
-        // refuses to send anything.
+        // Pairing usually names the target, and the connect path already
+        // subscribed to it. When it did not, a lone roster entry is the only
+        // unambiguous choice; with several the user picks one from the
+        // switch sheet. This goes through subscribeToAgent rather than
+        // _sendSubscribe because commands and request answers read
+        // profile.agentId, and leaving it null receives events but refuses
+        // to send anything.
         final target =
             profile.agentId ??
             (frame.agents.length == 1 ? frame.agents.single.agentId : null);
-        if (target != null) subscribeToAgent(target);
+        if (target != null && _status.subscribedAgentId != target) {
+          subscribeToAgent(target);
+        }
       case AgentsFrame():
         _setStatus((s) => s.copyWith(agents: frame.agents));
       case EventFrame():
@@ -417,6 +460,9 @@ class RelayClient {
     final changed = previous != agentId;
     profile = ConnectionProfile(
       url: profile.url,
+      // The candidate list has to survive a roster switch: dropping it left
+      // a later reconnect with one address to try.
+      alternates: profile.alternates,
       token: profile.token,
       role: profile.role,
       agentId: agentId,

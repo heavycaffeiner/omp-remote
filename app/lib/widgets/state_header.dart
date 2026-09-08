@@ -165,10 +165,13 @@ class _DetailGrid extends StatelessWidget {
       }
       final usage = state.contextUsage;
       if (usage != null) {
+        // Raw token counts are what overflowed the cell; thousands are what
+        // a reader actually compares.
+        String k(int n) => '${(n / 1000).round()}K';
         pairs.add((
           'Context',
           '${usage.percent.toStringAsFixed(1)}% '
-              '(${usage.tokens}/${usage.contextWindow})',
+              '(${k(usage.tokens)} of ${k(usage.contextWindow)})',
         ));
       }
     }
@@ -181,39 +184,30 @@ class _DetailGrid extends StatelessWidget {
     );
     final valueStyle = theme.textTheme.bodySmall;
 
+    // One pair per row, and values wrap. Two pairs per row left each value a
+    // quarter of a phone's width, which ellipsized exactly the fields worth
+    // expanding the panel for: the model, the session name, the last error.
     Widget cell(String text, TextStyle? style, {bool label = false}) => Padding(
       padding: EdgeInsets.only(
         right: AppSpacing.sm,
         bottom: AppSpacing.xs,
         left: label ? 0 : AppSpacing.sm,
       ),
-      child: Text(text, style: style, overflow: TextOverflow.ellipsis),
+      child: Text(text, style: style, softWrap: !label),
     );
 
-    final rows = <TableRow>[];
-    for (var i = 0; i < pairs.length; i += 2) {
-      final first = pairs[i];
-      final second = i + 1 < pairs.length ? pairs[i + 1] : null;
-      rows.add(
-        TableRow(
-          children: [
-            cell(first.$1, labelStyle, label: true),
-            cell(first.$2, valueStyle),
-            cell(second?.$1 ?? '', labelStyle, label: true),
-            cell(second?.$2 ?? '', valueStyle),
-          ],
-        ),
-      );
-    }
-
     return Table(
-      columnWidths: const {
-        0: IntrinsicColumnWidth(),
-        1: FlexColumnWidth(),
-        2: IntrinsicColumnWidth(),
-        3: FlexColumnWidth(),
-      },
-      children: rows,
+      columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
+      defaultVerticalAlignment: TableCellVerticalAlignment.top,
+      children: [
+        for (final pair in pairs)
+          TableRow(
+            children: [
+              cell(pair.$1, labelStyle, label: true),
+              cell(pair.$2, valueStyle),
+            ],
+          ),
+      ],
     );
   }
 }

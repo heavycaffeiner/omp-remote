@@ -154,6 +154,19 @@ export interface ModelRef {
 	id: string;
 }
 
+/// One named model slot core resolves through `@<role>`. `configured` is the
+/// selector stored in config.yml, absent when the slot is empty; `resolved`
+/// is what a turn would actually use, which for an empty slot is whatever
+/// `default` resolves to.
+export interface ModelRoleInfo {
+	role: string;
+	purpose?: string;
+	configured?: string;
+	resolvedProvider?: string;
+	resolvedId?: string;
+	source?: string;
+}
+
 export interface TodoSummary {
 	phase: string;
 	content: string;
@@ -243,11 +256,6 @@ export interface PendingRequestSummary {
 // State snapshot.
 // ---------------------------------------------------------------------------
 
-export interface FastModeSummary {
-	enabled: boolean;
-	active: boolean;
-}
-
 export interface StateSnapshot {
 	sessionId: string;
 	sessionName?: string;
@@ -260,7 +268,6 @@ export interface StateSnapshot {
 	/// Whether omp has a message pending behind the current turn.
 	/// `hasPendingMessages` is a boolean, so this is presence, not a count.
 	queued: number;
-	fastMode?: FastModeSummary;
 	autoCompaction?: boolean;
 	steeringMode?: string;
 	followUpMode?: string;
@@ -313,8 +320,11 @@ export interface CmdSetModelArgs {
 export interface CmdSetThinkingArgs {
 	level: string;
 }
-export interface CmdSetFastModeArgs {
-	enabled: boolean;
+/// `model` is a `provider/id` selector, optionally with an effort suffix.
+/// Omitted, the role is cleared and falls back to `default`.
+export interface CmdSetModelRoleArgs {
+	role: string;
+	model?: string;
 }
 export interface CmdSetAutoCompactionArgs {
 	enabled: boolean;

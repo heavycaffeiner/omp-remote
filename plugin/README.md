@@ -234,11 +234,20 @@ no-op'ing or calling something that would throw at runtime:
   handler's own context, not the `ExtensionContext` a command dispatched off
   a `command` wire frame runs with. `new_session` and `switch_session` fail
   the same way and for the same reason.
-
 - `run_command`: `ExtensionAPI` exposes no method to execute a slash
   command. Submitting `/name` through the prompt path was tried against a
   live session and does not work: the text reaches the model verbatim
   instead of being expanded, so the command never runs.
+
+Role model assignments are reachable, by a different route: they are
+settings, not session state, so `src/model-roles.ts` reaches the live
+`Settings` singleton the host initialized at startup. Writing a second,
+separately loaded copy would disagree with the running session; writing the
+live one means the next turn resolves `@role` to the new model and the
+workstation's own UI sees the same change. Core's built-in role list is not
+exported from the package root and the deep path is not published, so that
+list is named in `model-roles.ts` and unioned with whatever roles config.yml
+already holds.
 
 `commands` still works, but read its result for what it is: `getCommands()`
 returns only extension, prompt, and skill commands. Built-ins such as

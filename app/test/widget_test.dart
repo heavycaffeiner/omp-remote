@@ -64,7 +64,7 @@ void main() {
           ),
         ),
       );
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
 
       expect(find.text('Reading the file...done.'), findsOneWidget);
       expect(find.textContaining('read'), findsWidgets);
@@ -148,7 +148,7 @@ void main() {
         home: Scaffold(body: TranscriptView(sessionStore: store)),
       ),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
 
     // Each wrapper becomes its own labelled block, and an unknown tag still
     // renders as one rather than leaking angle brackets into the prose. The
@@ -231,7 +231,7 @@ void main() {
         home: Scaffold(body: TranscriptView(sessionStore: store)),
       ),
     );
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
 
     // The label belongs on the first row of the run that carries prose. A
     // thinking-only row opening the run must not consume it.

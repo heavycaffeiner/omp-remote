@@ -88,37 +88,95 @@ class AgentInfo {
   }
 }
 
+/// One authenticated model. `name` is what the workstation calls it; the rest
+/// is what a person needs to choose between two rows that otherwise differ
+/// only by an opaque id.
 class ModelInfo {
-  const ModelInfo({required this.provider, required this.id});
+  const ModelInfo({
+    required this.provider,
+    required this.id,
+    this.name,
+    this.reasoning = false,
+    this.contextWindow,
+    this.image = false,
+  });
 
   final String provider;
   final String id;
+  final String? name;
+  final bool reasoning;
+  final int? contextWindow;
+  final bool image;
 
   static ModelInfo? fromJson(Object? json) {
     final map = asMap(json);
     final provider = asString(map['provider']);
     final id = asString(map['id']);
     if (provider == null || id == null) return null;
-    return ModelInfo(provider: provider, id: id);
+    return ModelInfo(
+      provider: provider,
+      id: id,
+      name: asString(map['name']),
+      reasoning: asBool(map['reasoning']) ?? false,
+      contextWindow: asInt(map['contextWindow']),
+      image: asBool(map['image']) ?? false,
+    );
   }
 
   String get label => '$provider/$id';
+
+  /// What the row shows first: the workstation's own name for the model when
+  /// it has one, since an id like `claude-3-5-sonnet-20240620` is a date, not
+  /// a name.
+  String get title => name ?? id;
 }
 
-class FastModeInfo {
-  const FastModeInfo({required this.enabled, required this.active});
+/// A named model slot the workstation resolves through `@<role>`. An empty
+/// slot still resolves, by falling through to `default`, so `configured` and
+/// `resolved` are separate: one is the assignment, the other is what a turn
+/// would actually use.
+class ModelRoleInfo {
+  const ModelRoleInfo({
+    required this.role,
+    this.purpose,
+    this.configured,
+    this.resolved,
+    this.source,
+  });
 
-  final bool enabled;
-  final bool active;
+  final String role;
+  final String? purpose;
+  final String? configured;
+  final ModelInfo? resolved;
+  final String? source;
 
-  static FastModeInfo? fromJson(Object? json) {
+  static ModelRoleInfo? fromJson(Object? json) {
     final map = asMap(json);
-    if (map.isEmpty) return null;
-    return FastModeInfo(
-      enabled: asBool(map['enabled']) ?? false,
-      active: asBool(map['active']) ?? false,
+    final role = asString(map['role']);
+    if (role == null) return null;
+    final provider = asString(map['resolvedProvider']);
+    final id = asString(map['resolvedId']);
+    return ModelRoleInfo(
+      role: role,
+      purpose: asString(map['purpose']),
+      configured: asString(map['configured']),
+      resolved: provider == null || id == null
+          ? null
+          : ModelInfo(provider: provider, id: id),
+      source: asString(map['source']),
     );
   }
+
+  static List<ModelRoleInfo> listFromJson(Object? json) {
+    final result = <ModelRoleInfo>[];
+    for (final entry in asList(json)) {
+      final role = ModelRoleInfo.fromJson(entry);
+      if (role != null) result.add(role);
+    }
+    return result;
+  }
+
+  bool get isAssigned => configured != null;
 }
 
 class ContextUsage {
@@ -395,7 +453,6 @@ class StateSnapshot {
     required this.streaming,
     required this.compacting,
     required this.queued,
-    this.fastMode,
     this.autoCompaction,
     this.steeringMode,
     this.followUpMode,
@@ -416,7 +473,6 @@ class StateSnapshot {
   final bool compacting;
   final int queued;
 
-  final FastModeInfo? fastMode;
   final bool? autoCompaction;
   final String? steeringMode;
   final String? followUpMode;
@@ -438,7 +494,6 @@ class StateSnapshot {
       streaming: asBool(map['streaming']) ?? false,
       compacting: asBool(map['compacting']) ?? false,
       queued: asInt(map['queued']) ?? 0,
-      fastMode: FastModeInfo.fromJson(map['fastMode']),
       autoCompaction: asBool(map['autoCompaction']),
       steeringMode: asString(map['steeringMode']),
       followUpMode: asString(map['followUpMode']),
@@ -741,9 +796,9 @@ enum CommandName {
   models,
   systemPrompt,
   setModel,
+  setModelRole,
   cycleModel,
   setThinking,
-  setFastMode,
   setAutoCompaction,
   setSteeringMode,
   setFollowUpMode,
@@ -789,12 +844,12 @@ extension CommandNameWire on CommandName {
         return 'system_prompt';
       case CommandName.setModel:
         return 'set_model';
+      case CommandName.setModelRole:
+        return 'set_model_role';
       case CommandName.cycleModel:
         return 'cycle_model';
       case CommandName.setThinking:
         return 'set_thinking';
-      case CommandName.setFastMode:
-        return 'set_fast_mode';
       case CommandName.setAutoCompaction:
         return 'set_auto_compaction';
       case CommandName.setSteeringMode:

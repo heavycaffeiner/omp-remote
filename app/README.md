@@ -123,5 +123,28 @@ message is done at the workstation, since the extension API exposes no way to
 read or change that queue.
 
 Four commands are offered, because those are the four a phone can drive:
-`todo`, `compact`, `btw`, and `omfg`. Model, thinking level, and fast mode
-are settings on their own screen rather than commands.
+`todo`, `compact`, `btw`, and `omfg`. Which model runs is a setting, not a
+command, so it has its own screen.
+
+## Model settings
+
+Two tabs.
+
+**This session** lists every authenticated model, each row naming the model,
+its provider, whether it reasons, whether it takes images, and its context
+window; a filter narrows the list, which routinely runs to hundreds of rows.
+Tapping one switches the model this session runs, which is what `/switch`
+does at the workstation. The thinking level sits above the list. Both take
+effect on the next turn and are visible in the workstation's own status line
+immediately.
+
+**Roles** lists the named slots the workstation resolves through `@role`:
+`default`, `smol`, `slow`, `vision`, `plan`, `commit`, `tiny`, `task`,
+`advisor`, plus any custom role already configured. Each row says what the
+slot is for, what it holds, and, when it holds nothing, what it falls back
+to. Tapping one opens the same model list to fill it; the clear button empties
+it. These are machine-wide settings stored in config.yml, not session state.
+
+Fast mode, extended context, and the service tier are absent: the extension
+API exposes the model, the thinking level, and the role assignments, and
+nothing else about how a session spends.

@@ -327,6 +327,12 @@ verbatim. The `id` on a `response` is the agent's own request id.
 the workstation shows so a human knows who attached; it is untrusted and is
 truncated to 64 characters.
 
+`hello` must come first, but a client need not wait for `welcome` before
+sending `subscribe`: both transports read a client's frames in order. A
+client that already knows which agent it wants, which is every client that
+paired against a link, should send both in one write and save the round trip
+the replay would otherwise wait out.
+
 ### Relay to client
 
 | `t`              | Fields                              | Meaning                             |
@@ -375,7 +381,6 @@ fields are omitted, never guessed.
   "streaming": false,
   "compacting": false,
   "queued": 0,
-  "fastMode": { "enabled": false, "active": false },
   "autoCompaction": true,
   "steeringMode": "one-at-a-time",
   "followUpMode": "one-at-a-time",
@@ -516,19 +521,23 @@ at 4 entries and 4 MiB each.
 | `stats`     | `{}`                          | `{ tokens, cost, duration, turns }`  |
 | `tools`     | `{}`                          | `{ active, all }`                    |
 | `commands`  | `{}`                          | `{ commands }`                       |
-| `models`    | `{}`                          | `{ models, current }`                |
+| `models`    | `{}`                          | `{ models, current, roles }`         |
 | `system_prompt` | `{}`                      | `{ sections }`                       |
 
 `history` returns at most 200 messages; `before` pages backwards by message id.
+
+`models` lists every authenticated model as
+`{ provider, id, name, reasoning, contextWindow, image }`: a client choosing
+between two rows needs more than an id that is really a date stamp.
 
 ### Changing session settings
 
 | `cmd`             | `args`                     | Reply `data`             |
 | ----------------- | -------------------------- | ------------------------ |
 | `set_model`       | `{ provider, id }`         | `{ model }`              |
+| `set_model_role`  | `{ role, model? }`         | `{ role, configured?, roles }` |
 | `cycle_model`     | `{}`                       | `{ model }`              |
 | `set_thinking`    | `{ level }`                | `{ thinkingLevel }`      |
-| `set_fast_mode`   | `{ enabled }`              | `{ enabled, active }`    |
 | `set_auto_compaction` | `{ enabled }`          | `{ enabled }`            |
 | `set_steering_mode`   | `{ mode }`             | `{ mode }`               |
 | `set_follow_up_mode`  | `{ mode }`             | `{ mode }`               |
@@ -539,6 +548,45 @@ at 4 entries and 4 MiB each.
 `level` is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 `immediate` or `wait`.
+
+`set_model` changes the model this session runs, which is what `/switch` does
+at the workstation. It takes effect on the next turn, and both a `state`
+frame and a `model_changed` event go out at once, so a client never shows a
+stale model while waiting for a turn boundary. `set_thinking` behaves the
+same way, with `thinking_changed`.
+
+### Model roles
+
+A role is a named model slot the workstation resolves through `@<role>`:
+`smol` for cheap side work, `task` for subagents, `advisor` for the watchdog.
+`models` returns them alongside the model list:
+
+```jsonc
+{
+  "role": "smol",
+  "purpose": "Cheap, fast side work",
+  "configured": "kami-router/claude-sonnet-5:high",
+  "resolvedProvider": "kami-router",
+  "resolvedId": "claude-sonnet-5",
+  "source": "global"
+}
+```
+
+`configured` is the selector stored in config.yml, absent when the slot is
+empty. `resolvedProvider`/`resolvedId` are what a turn would actually use,
+which for an empty slot is whatever `default` resolves to. `source` is
+`runtime`, `overlay`, `project`, `global`, or `default`.
+
+`set_model_role` assigns a role, or clears it when `model` is omitted. The
+model is resolved before the write: a role pointing at a model the machine
+cannot authenticate would break every turn that used it, far from here. An
+effort suffix already on the role (`:xhigh`) survives re-picking the same
+model, and is dropped only by a genuine model change, because the suffix
+belonged to the old model.
+
+These are settings, not session state: they live in config.yml and apply to
+every session on the machine from its next turn, including the workstation's
+own UI.
 
 ### Session lifecycle
 
@@ -591,7 +639,7 @@ rule. `ExtensionAPI` exposes only the `ttsr_triggered` event, with nothing to
 forge a rule directly.
 
 Model selection is not a command. It is a setting, driven by `models`,
-`set_model`, `set_thinking`, and `set_fast_mode`.
+`set_model`, `set_model_role`, and `set_thinking`.
 
 ### Running things
 
@@ -630,8 +678,13 @@ arrives times out after 60 seconds with `command timed out`.
 ## Limits
 
 - At most 1 MiB per inbound message; a larger one closes the connection.
-- Each agent retains its most recent 512 event frames, one state snapshot, and
-  all currently pending interactive requests.
+- Each agent retains its most recent event frames (up to 8000, and up to
+  8 MiB of payload), one state snapshot, and all currently pending
+  interactive requests.
 - A connection whose outbound queue exceeds 256 frames is closed as too slow.
-- Both sides ping every 20 seconds and time out after 60.
+- Both sides ping every 20 seconds. A peer that has sent neither a frame nor
+  a pong within 60 seconds is closed, which is what removes a phone that
+  walked out of range from the roster and from the attached-client counts.
+  Nothing else notices: the server's own outbound pings keep the socket
+  looking busy indefinitely.
 - `bash` output is coalesced into at most one `bash_output` event per 100 ms.

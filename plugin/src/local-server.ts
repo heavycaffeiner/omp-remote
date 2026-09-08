@@ -64,6 +64,9 @@ interface ConnectionState {
 	agentId: string | undefined;
 	backpressureStreak: number;
 	pingTimer: Timer | undefined;
+	/// When this socket last proved it was alive, by a frame or a pong. A
+	/// silent peer past the read timeout is closed rather than counted.
+	lastSeenAt: number;
 }
 
 type LocalWebSocket = ServerWebSocket<ConnectionState>;
@@ -255,6 +258,14 @@ export class LocalServer {
 				idleTimeout: READ_TIMEOUT_SECONDS,
 				open: (ws: LocalWebSocket) => this.handleOpen(ws),
 				message: (ws: LocalWebSocket, message: string | Buffer) => this.handleMessage(ws, message),
+				// A pong is the only evidence a client is still there. Without
+				// reading it, the server's own outbound pings kept the socket
+				// looking busy, so a phone that walked out of range stayed in
+				// the roster forever: `/remote status` counted it, and tool
+				// approval waited on a control client that no longer existed.
+				pong: (ws: LocalWebSocket) => {
+					ws.data.lastSeenAt = Date.now();
+				},
 				close: (ws: LocalWebSocket) => this.handleClose(ws),
 				drain: (ws: LocalWebSocket) => {
 					ws.data.backpressureStreak = 0;
@@ -374,6 +385,7 @@ export class LocalServer {
 					agentId: undefined,
 					backpressureStreak: 0,
 					pingTimer: undefined,
+					lastSeenAt: Date.now(),
 				},
 			});
 			if (!upgraded) return new Response("upgrade failed", { status: 400 });
@@ -394,6 +406,7 @@ export class LocalServer {
 					agentId: undefined,
 					backpressureStreak: 0,
 					pingTimer: undefined,
+					lastSeenAt: Date.now(),
 				},
 			});
 			if (!upgraded) return new Response("upgrade failed", { status: 400 });
@@ -409,9 +422,22 @@ export class LocalServer {
 
 	private handleOpen(ws: LocalWebSocket): void {
 		this.connections.add(ws);
+		ws.data.lastSeenAt = Date.now();
 		if (ws.data.kind === "client") this.broadcastViewerCounts();
 
 		const pingCallback = () => {
+			// A peer that has not answered within the read timeout is gone,
+			// whatever the socket still claims. Closing here is what removes
+			// it from the roster and from the attached-client counts.
+			if (Date.now() - ws.data.lastSeenAt > READ_TIMEOUT_SECONDS * 1000) {
+				this.teardownConnection(ws);
+				try {
+					ws.close(1001, "no pong within the read timeout");
+				} catch {
+					// already gone
+				}
+				return;
+			}
 			try {
 				ws.ping();
 			} catch {
@@ -468,6 +494,7 @@ export class LocalServer {
 	}
 
 	private handleMessage(ws: LocalWebSocket, message: string | Buffer): void {
+		ws.data.lastSeenAt = Date.now();
 		if (typeof message !== "string") {
 			ws.close(1009, "binary frames are not supported");
 			return;

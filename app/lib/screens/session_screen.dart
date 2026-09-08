@@ -103,8 +103,13 @@ class _SessionScreenState extends State<SessionScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appInForeground = state == AppLifecycleState.resumed;
+    final resumed = state == AppLifecycleState.resumed;
+    final returning = resumed && !_appInForeground;
+    _appInForeground = resumed;
     _updateNotificationForeground();
+    // Coming back to the app is when a stale connection has to be noticed,
+    // not twenty seconds later when a ping finally fails.
+    if (returning) widget.relayClient.resume();
   }
 
   void _updateNotificationForeground() {

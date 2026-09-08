@@ -114,13 +114,49 @@ class SessionStore extends ChangeNotifier {
   /// Notified once per appended/updated entry list mutation (not per delta).
   final ValueNotifier<int> transcriptRevision = ValueNotifier<int>(0);
 
+  /// Rebuilds are throttled to one per frame budget. A subscribe replays a
+  /// whole session in one burst (hundreds of frames in a few milliseconds)
+  /// and a streaming turn arrives a delta at a time; notifying per frame
+  /// rebuilt the transcript hundreds of times and made connecting look slow
+  /// when the data had already arrived.
+  static const Duration _notifyWindow = Duration(milliseconds: 16);
+  Timer? _notifyTimer;
+  DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _revisionPending = false;
+
+  /// Coalesces a mutation into at most one listener notification per window,
+  /// firing at once when the last one is already older than the window so a
+  /// single change is never delayed.
+  void _emit({bool transcriptChanged = false}) {
+    if (transcriptChanged) _revisionPending = true;
+    if (_notifyTimer != null) return;
+    final now = DateTime.now();
+    final since = now.difference(_lastNotify);
+    if (since >= _notifyWindow) {
+      _flushNotify(now);
+      return;
+    }
+    _notifyTimer = Timer(_notifyWindow - since, () {
+      _notifyTimer = null;
+      _flushNotify(DateTime.now());
+    });
+  }
+
+  void _flushNotify(DateTime at) {
+    _lastNotify = at;
+    if (_revisionPending) {
+      _revisionPending = false;
+      transcriptRevision.value++;
+    }
+    notifyListeners();
+  }
+
   void clearTranscript() {
     _entries.clear();
     _subagents.clear();
     _openToolBlockId = null;
     _hasOpenTextBlock = false;
-    transcriptRevision.value++;
-    notifyListeners();
+    _emit(transcriptChanged: true);
   }
 
   /// Resets local seq tracking, pending requests, and the transcript.
@@ -165,7 +201,7 @@ class SessionStore extends ChangeNotifier {
               ),
             );
         }
-        notifyListeners();
+        _emit();
       case RequestFrame():
         _pendingRequests.removeWhere((p) => p.id == frame.id);
         _pendingRequests.add(
@@ -175,17 +211,17 @@ class SessionStore extends ChangeNotifier {
             receivedAt: DateTime.now(),
           ),
         );
-        notifyListeners();
+        _emit();
       case RequestCancelFrame():
         _pendingRequests.removeWhere((p) => p.id == frame.id);
-        notifyListeners();
+        _emit();
       case ReplyFrame():
         if (!frame.ok) {
           lastLateAnswerError = LateAnswerError(
             requestId: frame.id,
             message: frame.error ?? 'error',
           );
-          notifyListeners();
+          _emit();
         }
       case WelcomeFrame():
       case AgentsFrame():
@@ -196,8 +232,7 @@ class SessionStore extends ChangeNotifier {
 
   void _appendEntry(TranscriptEntry entry) {
     _entries.add(entry);
-    transcriptRevision.value++;
-    notifyListeners();
+    _emit(transcriptChanged: true);
   }
 
   TranscriptEntry? _findOpenTextEntry() {
@@ -251,8 +286,7 @@ class SessionStore extends ChangeNotifier {
           if (!hasContent) {
             _entries.remove(existing);
             _hasOpenTextBlock = false;
-            transcriptRevision.value++;
-            notifyListeners();
+            _emit(transcriptChanged: true);
             return;
           }
           existing.text = event.text;
@@ -332,7 +366,7 @@ class SessionStore extends ChangeNotifier {
         );
       case SubagentEvent():
         _subagents[event.id] = event;
-        notifyListeners();
+        _emit();
       case RetryEvent():
         _appendEntry(
           TranscriptEntry(
@@ -399,7 +433,7 @@ class SessionStore extends ChangeNotifier {
         // The event is the live source: `state.todos` only refreshes at a
         // turn boundary, and the list must track edits as they happen.
         _todos = event.todos;
-        notifyListeners();
+        _emit();
       case AgentStartEvent():
       case AgentEndEvent():
       case TurnStartEvent():
@@ -420,12 +454,13 @@ class SessionStore extends ChangeNotifier {
   /// and sends the response frame.
   void answerRequest(String requestId, Map<String, Object?> response) {
     _pendingRequests.removeWhere((p) => p.id == requestId);
-    notifyListeners();
+    _emit();
     relayClient.sendResponse(requestId: requestId, response: response);
   }
 
   @override
   void dispose() {
+    _notifyTimer?.cancel();
     _subscription?.cancel();
     transcriptRevision.dispose();
     super.dispose();
