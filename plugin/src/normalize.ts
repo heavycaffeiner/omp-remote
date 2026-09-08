@@ -37,13 +37,14 @@ export function modelToRef(model: Model | undefined): ModelRef | undefined {
 // agent-local selectors that exist for every model, so they are prepended
 // rather than expected in the catalog's list.
 //
-// Undefined when the model has no controllable effort surface, which a
-// client should render as a disabled control rather than a full list. One
-// function because the model list and the state snapshot both report this
-// and must not drift.
-export function thinkingLevelsFor(model: Model | undefined): string[] | undefined {
-	const efforts = model?.thinking?.efforts;
-	if (!efforts || efforts.length === 0) return undefined;
+// Empty when the model has no controllable effort surface, which a client
+// renders as a disabled control. Empty and absent mean different things on
+// the wire: empty is this workstation saying the model takes no effort
+// setting, absent is it not having said yet. One function because the model
+// list and the state snapshot both report this and must not drift.
+export function offeredLevels(model: Model): string[] {
+	const efforts = model.thinking?.efforts;
+	if (!efforts || efforts.length === 0) return [];
 	return ["inherit", "off", ...efforts];
 }
 

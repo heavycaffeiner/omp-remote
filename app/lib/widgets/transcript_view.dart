@@ -65,22 +65,12 @@ class _TranscriptViewState extends State<TranscriptView> {
     setState(() => _following = atBottom);
   }
 
-  /// Whether a tail pin is already scheduled for the next frame.
-  bool _pinScheduled = false;
-
   /// Re-pins the viewport to the bottom after the frame that changed its
   /// height. Sampling `_atBottom` before the rebuild is what keeps a user who
   /// scrolled up from being yanked back.
-  ///
-  /// At most one callback is outstanding: the last row calls this on every
-  /// build, and a replay builds it hundreds of times, each scheduling its own
-  /// jump to a bottom that had not moved. Worth 24ms against 30ms for ten
-  /// drags over a replayed session.
   void _pinTail() {
-    if (!_following || _pinScheduled) return;
-    _pinScheduled = true;
+    if (!_following) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pinScheduled = false;
       if (!mounted || !_scroll.hasClients || !_following) return;
       final max = _scroll.position.maxScrollExtent;
       if (_scroll.position.pixels >= max) return;
@@ -113,8 +103,8 @@ class _TranscriptViewState extends State<TranscriptView> {
         return Stack(
           children: [
             // One selection region for the whole list instead of one per
-            // row: a per-row selectable markdown body is what made scrolling
-            // a replayed session cost hundreds of milliseconds per drag.
+            // row. Per-row regions cost 44ms against 22ms to first render a
+            // replayed session; copying still works from this one.
             SelectionArea(
               child: ListView.separated(
                 controller: _scroll,

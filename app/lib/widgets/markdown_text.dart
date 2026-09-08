@@ -18,31 +18,24 @@ class MarkdownText extends StatelessWidget {
   Widget build(BuildContext context) {
     return MarkdownBody(
       data: text,
-      // Not selectable per row. A selection region per row cost 1.7x on
-      // first render of a replayed session (25ms to 42ms for 3200 entries).
-      // The transcript is wrapped in one region instead, so copying still
-      // works.
+      // Not selectable per row. A selection region per row costs 44ms
+      // against 22ms to first render 3200 entries. The transcript is wrapped
+      // in one region instead, so copying still works.
       selectable: false,
       styleSheet: _styleSheetFor(context, style),
     );
   }
 }
 
-/// One stylesheet per (brightness, base style).
+/// The sheet the transcript renders markdown with, built per call.
 ///
-/// Building it does not depend on the text, and rebuilding it per row per
-/// frame cost 42ms against 25ms on first render and 34ms against 24ms on ten
-/// drags. The key is deliberately cheap: hashing a whole `ThemeData` walks
-/// every field it holds, which would spend on the lookup what the cache
-/// saves on the build.
-final Map<(Brightness, TextStyle?), MarkdownStyleSheet> _styleSheets = {};
-
+/// It was memoized for a while. Measured against building it fresh, the
+/// difference is inside the noise of the benchmark that produced it: 21ms
+/// against 22ms to first render 3200 entries. Keying a cache correctly is
+/// not free either, since this app takes its palette from the wallpaper, so
+/// colours change while brightness does not.
 MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? style) {
   final theme = Theme.of(context);
-  final key = (theme.brightness, style);
-  final cached = _styleSheets[key];
-  if (cached != null) return cached;
-
   final scheme = theme.colorScheme;
   final body = style ?? theme.textTheme.bodyMedium;
   final mono = theme.textTheme.bodySmall?.copyWith(
@@ -87,8 +80,5 @@ MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? style) {
       vertical: AppSpacing.xs,
     ),
   );
-  // Two themes (light and dark) and a handful of base styles, so this never
-  // grows: it is a memo, not a leak.
-  _styleSheets[key] = sheet;
   return sheet;
 }

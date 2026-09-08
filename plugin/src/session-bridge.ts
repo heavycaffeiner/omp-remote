@@ -24,7 +24,7 @@ import {
 	safeStringifyInput,
 	truncateText,
 	TEXT_MAX_BYTES,
-	thinkingLevelsFor,
+	offeredLevels,
 	TOOL_INPUT_MAX_BYTES,
 } from "./normalize.js";
 import type {
@@ -288,7 +288,7 @@ export class SessionBridge {
 		// omitting the key instead left a client unable to tell that apart
 		// from a session that has not reported yet.
 		if (ctx?.model !== undefined) {
-			snapshot.thinkingLevels = thinkingLevelsFor(ctx.model) ?? [];
+			snapshot.thinkingLevels = offeredLevels(ctx.model);
 		}
 		if (this.forwarded.length > 0) snapshot.queue = [...this.forwarded];
 		snapshot.compacting = this.compacting;

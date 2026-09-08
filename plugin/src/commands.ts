@@ -11,7 +11,7 @@ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
 import { BTW_TASK, OMFG_TASK, runSideTask, type SideTask } from "./btw.js";
 import { listModelRoles, setModelRole } from "./model-roles.js";
-import { thinkingLevelsFor } from "./normalize.js";
+import { offeredLevels } from "./normalize.js";
 import type { RemoteConfig } from "./config.js";
 import type { SessionBridge } from "./session-bridge.js";
 
@@ -473,7 +473,7 @@ function cmdModels(bridge: SessionBridge): CommandResult {
 		// not others, so a fixed list offered levels that would be rejected
 		// or silently clamped. An empty list means no effort control at all,
 		// which a client has to be able to tell from "not reported".
-		thinking: thinkingLevelsFor(m) ?? [],
+		thinking: offeredLevels(m),
 	}));
 	const current = ctx.models.current();
 	return ok({
