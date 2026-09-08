@@ -129,6 +129,10 @@ class RelayClient {
   static const int _maxBackoffSeconds = 10;
   bool _closed = false;
   int _generation = 0;
+  // One probe at a time. Android delivers several resume callbacks in a row,
+  // and each one starting its own probe meant several reconnects racing.
+  bool _probing = false;
+  static const Duration _probeTimeout = Duration(seconds: 6);
 
   int _highestSeq = 0;
   final Map<String, _PendingCommand> _pending = {};
@@ -184,14 +188,14 @@ class RelayClient {
 
   /// Called when the app returns to the foreground.
   ///
-  /// Two separate delays used to be waited out on the phone rather than on
-  /// the workstation. A socket that died while the process was suspended is
-  /// not noticed until a ping fails, twenty seconds of staring at a screen
-  /// that is no longer live; and a scheduled retry may be sitting on a
-  /// backoff of up to thirty seconds that the user is now waiting out for no
-  /// reason. Coming back to the app is evidence that waiting is over.
+  /// A socket that died while the process was suspended is not noticed until
+  /// a ping fails, twenty seconds of staring at a screen that is no longer
+  /// live; and a scheduled retry may be sitting out a backoff the user is now
+  /// waiting through for no reason. Coming back is evidence that waiting is
+  /// over.
   void resume() {
     if (_closed) return;
+    if (_probing) return;
     if (_status.phase != ConnectionPhase.connected) {
       unawaited(retryNow());
       return;
@@ -202,12 +206,21 @@ class RelayClient {
   /// Asks the workstation for the state it already sends unprompted. The
   /// reply is discarded: what matters is whether one arrives, since a
   /// suspended socket answers nothing and needs replacing.
+  ///
+  /// Only a silent socket is worth reconnecting for. A command that fails
+  /// because no agent is selected, or because the connection already went
+  /// down, is answered by something other than another connect: retrying on
+  /// those turned every foreground into a reconnect.
   Future<void> _probe() async {
+    _probing = true;
     try {
-      await sendCommand(CommandName.state, timeout: const Duration(seconds: 4));
+      await sendCommand(CommandName.state, timeout: _probeTimeout);
+    } on CommandTimeoutException {
+      if (!_closed) await retryNow();
     } catch (_) {
-      if (_closed) return;
-      await retryNow();
+      // Nothing a reconnect fixes.
+    } finally {
+      _probing = false;
     }
   }
 

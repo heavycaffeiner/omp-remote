@@ -99,6 +99,7 @@ class ModelInfo {
     this.reasoning = false,
     this.contextWindow,
     this.image = false,
+    this.thinking,
   });
 
   final String provider;
@@ -108,11 +109,20 @@ class ModelInfo {
   final int? contextWindow;
   final bool image;
 
+  /// The thinking levels this model accepts, least to most intensive. Null
+  /// when it has no controllable effort surface, which is not the same as an
+  /// empty list: `high` exists on some models and not others, so a fixed
+  /// list offered levels the model would reject.
+  final List<String>? thinking;
+
   static ModelInfo? fromJson(Object? json) {
     final map = asMap(json);
     final provider = asString(map['provider']);
     final id = asString(map['id']);
     if (provider == null || id == null) return null;
+    final levels = map.containsKey('thinking')
+        ? [for (final entry in asList(map['thinking'])) ?asString(entry)]
+        : null;
     return ModelInfo(
       provider: provider,
       id: id,
@@ -120,6 +130,7 @@ class ModelInfo {
       reasoning: asBool(map['reasoning']) ?? false,
       contextWindow: asInt(map['contextWindow']),
       image: asBool(map['image']) ?? false,
+      thinking: (levels != null && levels.isNotEmpty) ? levels : null,
     );
   }
 
@@ -450,6 +461,7 @@ class StateSnapshot {
     this.cwd,
     this.model,
     this.thinkingLevel,
+    this.thinkingLevels,
     required this.streaming,
     required this.compacting,
     required this.queued,
@@ -469,6 +481,10 @@ class StateSnapshot {
   final String? cwd;
   final ModelInfo? model;
   final String? thinkingLevel;
+
+  /// The levels the current model accepts. Null when the workstation did not
+  /// say, or when the model has no effort control at all.
+  final List<String>? thinkingLevels;
   final bool streaming;
   final bool compacting;
   final int queued;
@@ -491,6 +507,12 @@ class StateSnapshot {
       cwd: asString(map['cwd']),
       model: ModelInfo.fromJson(map['model']),
       thinkingLevel: asString(map['thinkingLevel']),
+      thinkingLevels: map.containsKey('thinkingLevels')
+          ? [
+              for (final entry in asList(map['thinkingLevels']))
+                ?asString(entry),
+            ]
+          : null,
       streaming: asBool(map['streaming']) ?? false,
       compacting: asBool(map['compacting']) ?? false,
       queued: asInt(map['queued']) ?? 0,
@@ -806,6 +828,7 @@ enum CommandName {
   setActiveTools,
   setTodos,
   newSession,
+  endSession,
   switchSession,
   listSessions,
   branch,
@@ -864,6 +887,8 @@ extension CommandNameWire on CommandName {
         return 'set_todos';
       case CommandName.newSession:
         return 'new_session';
+      case CommandName.endSession:
+        return 'end_session';
       case CommandName.switchSession:
         return 'switch_session';
       case CommandName.listSessions:
@@ -885,16 +910,6 @@ extension CommandNameWire on CommandName {
     }
   }
 }
-
-const List<String> thinkingLevels = [
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-];
 
 class SlashCommandInfo {
   const SlashCommandInfo({

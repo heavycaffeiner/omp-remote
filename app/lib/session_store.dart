@@ -107,6 +107,22 @@ class SessionStore extends ChangeNotifier {
 
   LateAnswerError? lastLateAnswerError;
 
+  /// Prompts this client sent while the agent was busy, in the order they
+  /// were sent.
+  ///
+  /// omp owns the real queue and the extension API exposes only whether it
+  /// is non-empty, never its contents, so a client cannot read back what is
+  /// waiting. What it can do is remember what it put there and stop showing
+  /// it once the workstation reports the queue empty. Text typed at the
+  /// workstation never appears here, which is why the panel says whose it is.
+  final List<String> _sentQueue = [];
+  List<String> get sentQueue => List.unmodifiable(_sentQueue);
+
+  void noteQueuedPrompt(String text) {
+    _sentQueue.add(text);
+    _emit();
+  }
+
   int _lastAppliedSeq = 0;
   String? _openToolBlockId;
   bool _hasOpenTextBlock = false;
@@ -201,6 +217,12 @@ class SessionStore extends ChangeNotifier {
               ),
             );
         }
+        // omp reports presence, not contents. Once it says nothing is
+        // pending, whatever this client sent has been consumed, so the panel
+        // stops claiming otherwise. An idle agent also has no queue.
+        if (frame.state.queued == 0 && _sentQueue.isNotEmpty) {
+          _sentQueue.clear();
+        }
         _emit();
       case RequestFrame():
         _pendingRequests.removeWhere((p) => p.id == frame.id);
@@ -259,6 +281,12 @@ class SessionStore extends ChangeNotifier {
   /// can exercise transcript rendering without a live socket.
   @visibleForTesting
   void applyEventForTest(SessionEvent event) => _applyEvent(event);
+
+  /// Applies one server frame as if it had arrived over the wire, for the
+  /// same reason: state handling is what decides when a tracked queue is
+  /// stale, and that needs no socket to exercise.
+  @visibleForTesting
+  void applyFrameForTest(ServerFrame frame) => _handleFrame(frame);
 
   void _applyEvent(SessionEvent event) {
     switch (event) {

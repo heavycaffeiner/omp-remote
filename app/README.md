@@ -117,10 +117,12 @@ Above the transcript: the agent's todo list while it has one, updated as the
 list changes rather than at turn boundaries, and one row per spawned subagent
 with its status, current tool, and token count.
 
-A prompt sent mid-turn goes into omp's own pending queue and arrives at the
-next step boundary. The send button carries the count; editing a pending
-message is done at the workstation, since the extension API exposes no way to
-read or change that queue.
+A prompt sent mid-turn is queued as a steer, so it arrives at the agent's
+next step rather than after the whole turn. Until then it sits in omp's own
+queue, which the workstation renders and can edit. A panel above the composer
+lists what this phone put there; the contents of that queue are not readable
+over the wire, so nothing typed at the workstation appears in it, and editing
+or dropping an entry is a workstation action.
 
 Four commands are offered, because those are the four a phone can drive:
 `todo`, `compact`, `btw`, and `omfg`. Which model runs is a setting, not a

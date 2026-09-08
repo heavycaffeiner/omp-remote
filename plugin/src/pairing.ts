@@ -165,11 +165,20 @@ interface HostedPairing {
 // behalf, plus the client token that code stands for. A guest has no server
 // of its own, so without this only the session that happened to start first
 // could be paired to.
-async function requestHostedPairing(port: number, role: "control" | "viewer"): Promise<HostedPairing | undefined> {
+//
+// `agent` is what makes the code name this session rather than the host's:
+// the port is shared, so the code is the only thing that can say which
+// session the person typing it meant.
+async function requestHostedPairing(
+	port: number,
+	role: "control" | "viewer",
+	agentId: string,
+): Promise<HostedPairing | undefined> {
 	try {
-		const response = await fetch(`http://127.0.0.1:${port}/join?code=${role}`, {
-			signal: AbortSignal.timeout(2000),
-		});
+		const response = await fetch(
+			`http://127.0.0.1:${port}/join?code=${role}&agent=${encodeURIComponent(agentId)}`,
+			{ signal: AbortSignal.timeout(2000) },
+		);
 		if (!response.ok) return undefined;
 		const payload = (await response.json()) as Record<string, unknown>;
 		const { url, code, expiresAt, clientToken } = payload;
@@ -377,6 +386,10 @@ export function registerRemoteCommand(
 	pi.registerCommand("remote", {
 		description: "Pair the OMPRemote app with this session, or configure it",
 		handler: async (argsText, ctx) => {
+			// The only context carrying `newSession`/`switchSession`, which the
+			// app's session controls need. Kept on every call, not just the
+			// first, so it always names the session running now.
+			bridge.rememberCommandCtx(ctx);
 			const words = argsText.trim().split(/\s+/).filter((word) => word.length > 0);
 			const first = words[0]?.toLowerCase() ?? "";
 
@@ -400,7 +413,7 @@ export function registerRemoteCommand(
 			// so pairing works the same from any session rather than only the
 			// one that happened to start first.
 			if (!forceRelay && !local && config.local) {
-				const hosted = await requestHostedPairing(config.local.port, role);
+				const hosted = await requestHostedPairing(config.local.port, role, bridge.agentId);
 				if (hosted) {
 					const minutes = Math.round((hosted.expiresAt - Date.now()) / 60000);
 					const roleLabel = role === "viewer" ? "Viewer, read-only" : "Control";
@@ -492,7 +505,7 @@ export function registerRemoteCommand(
 			// Relay pairing has no code: the code is redeemed from the local
 			// server, which a relayed client cannot reach.
 			if (transport === "direct" && local) {
-				const issued = local.issuePairingCode(role);
+				const issued = local.issuePairingCode(role, bridge.agentId);
 				const minutes = Math.round((issued.expiresAt - Date.now()) / 60000);
 				lines.push(
 					"Cannot scan? In the app choose Enter a code, then type:",

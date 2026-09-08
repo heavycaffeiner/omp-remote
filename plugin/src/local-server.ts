@@ -35,7 +35,10 @@ export interface LocalServerTokens {
 }
 
 const MAX_INBOUND_BYTES = 1024 * 1024;
-const MAX_OUTBOUND_QUEUE = 256;
+// How far behind a client may fall before it is dropped, in unsent bytes.
+// Sized well above one replay of a full session so a normal attach never
+// trips it, and far below anything that would strain the workstation.
+const MAX_OUTBOUND_BYTES = 32 * 1024 * 1024;
 const PING_INTERVAL_MS = 20000;
 const READ_TIMEOUT_SECONDS = 60;
 const COMMAND_TIMEOUT_MS = 60000;
@@ -62,7 +65,6 @@ interface ConnectionState {
 	role: Role;
 	subscriptions: Set<string>;
 	agentId: string | undefined;
-	backpressureStreak: number;
 	pingTimer: Timer | undefined;
 	/// When this socket last proved it was alive, by a frame or a pong. A
 	/// silent peer past the read timeout is closed rather than counted.
@@ -113,7 +115,7 @@ export class LocalServer {
 	private readonly connections = new Set<LocalWebSocket>();
 	private readonly registry = new AgentRegistry();
 	private readonly agentSockets = new Map<string, LocalWebSocket>();
-	private readonly pairingCodes = new Map<string, { role: Role; expiresAt: number }>();
+	private readonly pairingCodes = new Map<string, { role: Role; agentId: string; expiresAt: number }>();
 	private failedRedemptions = 0;
 	// Commands in flight to a guest agent, keyed by the id this hub assigned.
 	private readonly pendingCommands = new Map<string, PendingCommand>();
@@ -198,14 +200,19 @@ export class LocalServer {
 
 	// Issues a short code standing for a token, so pairing without the QR is
 	// six typed characters rather than sixty-four.
-	issuePairingCode(role: Role): { code: string; expiresAt: number } {
+	//
+	// The code records which session issued it. Every session on a workstation
+	// shares one listening port, so without this the payload could only ever
+	// name the host: typing a guest session's code connected the app to
+	// whichever session happened to start first.
+	issuePairingCode(role: Role, agentId: string): { code: string; expiresAt: number } {
 		this.prunePairingCodes();
 		let code = "";
 		do {
 			code = randomPairingCode();
 		} while (this.pairingCodes.has(code));
 		const expiresAt = Date.now() + PAIRING_CODE_TTL_MS;
-		this.pairingCodes.set(code, { role, expiresAt });
+		this.pairingCodes.set(code, { role, agentId, expiresAt });
 		return { code, expiresAt };
 	}
 
@@ -219,7 +226,7 @@ export class LocalServer {
 		if (this.pairingCodes.size === 0) this.failedRedemptions = 0;
 	}
 
-	private redeemPairingCode(code: string): { token: string; role: Role } | undefined {
+	private redeemPairingCode(code: string): { token: string; role: Role; agentId: string } | undefined {
 		this.prunePairingCodes();
 		if (this.failedRedemptions >= MAX_FAILED_REDEMPTIONS) return undefined;
 
@@ -234,6 +241,7 @@ export class LocalServer {
 		return {
 			token: entry.role === "control" ? this.tokens.control : this.tokens.viewer,
 			role: entry.role,
+			agentId: entry.agentId,
 		};
 	}
 
@@ -267,9 +275,6 @@ export class LocalServer {
 					ws.data.lastSeenAt = Date.now();
 				},
 				close: (ws: LocalWebSocket) => this.handleClose(ws),
-				drain: (ws: LocalWebSocket) => {
-					ws.data.backpressureStreak = 0;
-				},
 			},
 		});
 	}
@@ -323,7 +328,10 @@ export class LocalServer {
 				return Response.json({ v: PROTOCOL_VERSION, token: this.tokens.agent });
 			}
 			const role: Role = wantCode === "viewer" ? "viewer" : "control";
-			const issued = this.issuePairingCode(role);
+			// A guest asks for a code naming itself; the host's own request
+			// carries no id and means this session.
+			const forAgent = url.searchParams.get("agent") ?? this.bridge.agentId;
+			const issued = this.issuePairingCode(role, forAgent);
 			return Response.json({
 				v: PROTOCOL_VERSION,
 				token: this.tokens.agent,
@@ -363,7 +371,18 @@ export class LocalServer {
 			if (!redeemed) {
 				return Response.json({ error: "unknown or expired pairing code" }, { status: 404 });
 			}
-			return Response.json({ ...base, role: redeemed.role, token: redeemed.token });
+			// The session that issued the code, which is not always the host:
+			// every session shares one port, and a code typed from a guest has
+			// to reach that guest. Its name comes from the roster for the same
+			// reason.
+			const issuer = this.registry.list().find((a) => a.agentId === redeemed.agentId);
+			return Response.json({
+				...base,
+				agent: redeemed.agentId,
+				name: issuer?.name ?? base.name,
+				role: redeemed.role,
+				token: redeemed.token,
+			});
 		}
 
 		// Another session on this workstation joining as an agent. Loopback
@@ -383,7 +402,6 @@ export class LocalServer {
 					role: "control" as Role,
 					subscriptions: new Set<string>(),
 					agentId: undefined,
-					backpressureStreak: 0,
 					pingTimer: undefined,
 					lastSeenAt: Date.now(),
 				},
@@ -404,7 +422,6 @@ export class LocalServer {
 					role,
 					subscriptions: new Set<string>(),
 					agentId: undefined,
-					backpressureStreak: 0,
 					pingTimer: undefined,
 					lastSeenAt: Date.now(),
 				},
@@ -758,25 +775,22 @@ export class LocalServer {
 		this.registry.get(agentId)?.channel.sendViewers({ control, viewer });
 	}
 
-	// Bun's send() returns 0 (dropped), -1 (queued under backpressure), or the
-	// byte count sent immediately. A run of consecutive backpressured sends
-	// approximates the protocol's outbound queue limit.
+	// A slow client is one whose unsent bytes keep piling up, which is what
+	// `getBufferedAmount()` reports. Counting consecutive backpressured sends
+	// instead measured how fast the server pushed, not how far behind the
+	// client was: replaying a session in one loop returns -1 for every frame
+	// while the socket drains normally, so any session past a few hundred
+	// retained events closed itself on subscribe and the client reconnected
+	// into the same replay.
 	private send(ws: LocalWebSocket, frame: ServerToClientFrame): void {
 		this.sendRaw(ws, frame);
 	}
 
 	private sendRaw(ws: LocalWebSocket, frame: unknown): void {
 		if (ws.readyState !== 1) return;
-		const status = ws.send(JSON.stringify(frame));
-		if (status > 0) {
-			ws.data.backpressureStreak = 0;
-			return;
-		}
-		if (status === -1) {
-			ws.data.backpressureStreak += 1;
-			if (ws.data.backpressureStreak >= MAX_OUTBOUND_QUEUE) {
-				ws.close(1013, "too slow");
-			}
+		ws.send(JSON.stringify(frame));
+		if (ws.getBufferedAmount() > MAX_OUTBOUND_BYTES) {
+			ws.close(1013, "too slow");
 		}
 	}
 }

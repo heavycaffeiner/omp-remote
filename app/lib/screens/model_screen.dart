@@ -179,32 +179,45 @@ class _ModelScreenState extends State<ModelScreen> {
   Widget _buildSessionTab(BuildContext context) {
     final state = widget.sessionStore.state;
     final locked = !widget.canControl;
+    // The state snapshot names them for the model in use. The model list is
+    // the fallback for a client that attached before the first snapshot, and
+    // an empty result means this model takes no effort setting at all.
+    final currentRow = _models.firstWhere(
+      (m) => m.label == _current?.label,
+      orElse: () => const ModelInfo(provider: '', id: ''),
+    );
+    final levels = state?.thinkingLevels ?? currentRow.thinking ?? const [];
 
     return Column(
       children: [
         if (locked) _readOnlyNote(context),
         // Thinking belongs with the model: it is the same decision about how
-        // much the session is allowed to spend.
+        // much the session is allowed to spend. The levels come from the
+        // workstation per model, because `high` and `xhigh` exist on some
+        // models and not others, and offering one the model rejects is worse
+        // than not offering it.
         ListTile(
           leading: const Icon(Icons.psychology_outlined, size: 20),
           title: const Text('Thinking'),
           subtitle: Text(
-            state?.thinkingLevel ??
-                'not set for this session, using the workstation default',
+            levels.isEmpty
+                ? 'This model has no thinking control'
+                : (state?.thinkingLevel ??
+                      'not set for this session, using the workstation default'),
           ),
           trailing: DropdownButton<String>(
-            value: thinkingLevels.contains(state?.thinkingLevel)
+            value: levels.contains(state?.thinkingLevel)
                 ? state?.thinkingLevel
                 : null,
             hint: const Text('level'),
-            onChanged: locked
+            onChanged: (locked || levels.isEmpty)
                 ? null
                 : (value) {
                     if (value == null) return;
                     unawaited(_send(CommandName.setThinking, {'level': value}));
                   },
             items: [
-              for (final level in thinkingLevels)
+              for (final level in levels)
                 DropdownMenuItem(value: level, child: Text(level)),
             ],
           ),

@@ -31,7 +31,9 @@ class _FakeAgent {
   /// case, not an edge case.
   final List<String> roster;
 
-  static Future<_FakeAgent> start({List<String> roster = const [agentId]}) async {
+  static Future<_FakeAgent> start({
+    List<String> roster = const [agentId],
+  }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final agent = _FakeAgent(server, roster);
     unawaited(agent._accept());
@@ -120,35 +122,38 @@ void main() {
     expect(subscribe['since'], 0);
   });
 
-  test('a paired session is the target even when the workstation serves several', () async {
-    await agent.close();
-    agent = await _FakeAgent.start(
-      roster: const [_FakeAgent.agentId, _FakeAgent.secondAgentId],
-    );
-    client = RelayClient(
-      profile: ConnectionProfile(
-        url: agent.url,
-        token: 'token',
-        role: ClientRole.control,
-        agentId: _FakeAgent.secondAgentId,
-        name: 'phone',
-      ),
-    );
-    await client.connect();
-    await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
+  test(
+    'a paired session is the target even when the workstation serves several',
+    () async {
+      await agent.close();
+      agent = await _FakeAgent.start(
+        roster: const [_FakeAgent.agentId, _FakeAgent.secondAgentId],
+      );
+      client = RelayClient(
+        profile: ConnectionProfile(
+          url: agent.url,
+          token: 'token',
+          role: ClientRole.control,
+          agentId: _FakeAgent.secondAgentId,
+          name: 'phone',
+        ),
+      );
+      await client.connect();
+      await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
 
-    final subscribe = agent.received.firstWhere((f) => f['t'] == 'subscribe');
-    expect(subscribe['agentId'], _FakeAgent.secondAgentId);
+      final subscribe = agent.received.firstWhere((f) => f['t'] == 'subscribe');
+      expect(subscribe['agentId'], _FakeAgent.secondAgentId);
 
-    // The bug this guards: with no target the client connects but every
-    // command fails with "no agent selected".
-    unawaited(
-      client.sendCommand(CommandName.abort).catchError((Object _) => null),
-    );
-    await _until(() => agent.received.any((f) => f['t'] == 'command'));
-    final command = agent.received.firstWhere((f) => f['t'] == 'command');
-    expect(command['agentId'], _FakeAgent.secondAgentId);
-  });
+      // The bug this guards: with no target the client connects but every
+      // command fails with "no agent selected".
+      unawaited(
+        client.sendCommand(CommandName.abort).catchError((Object _) => null),
+      );
+      await _until(() => agent.received.any((f) => f['t'] == 'command'));
+      final command = agent.received.firstWhere((f) => f['t'] == 'command');
+      expect(command['agentId'], _FakeAgent.secondAgentId);
+    },
+  );
 
   test('commands reach the agent after that implicit subscribe', () async {
     await client.connect();
@@ -200,31 +205,34 @@ void main() {
     expect(agent.received.any((f) => f['t'] == 'unsubscribe'), isFalse);
   });
 
-  test('a repeated event leaves the transcript alone, a restart clears it', () async {
-    final store = SessionStore(relayClient: client);
-    addTearDown(store.dispose);
-    await client.connect();
-    await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
+  test(
+    'a repeated event leaves the transcript alone, a restart clears it',
+    () async {
+      final store = SessionStore(relayClient: client);
+      addTearDown(store.dispose);
+      await client.connect();
+      await _until(() => agent.received.any((f) => f['t'] == 'subscribe'));
 
-    void event(int seq, String text) => agent.send({
-      't': 'event',
-      'agentId': _FakeAgent.agentId,
-      'seq': seq,
-      'event': {'k': 'message', 'role': 'assistant', 'text': text},
-    });
+      void event(int seq, String text) => agent.send({
+        't': 'event',
+        'agentId': _FakeAgent.agentId,
+        'seq': seq,
+        'event': {'k': 'message', 'role': 'assistant', 'text': text},
+      });
 
-    event(1, 'first');
-    event(2, 'second');
-    await _until(() => store.entries.length == 2);
+      event(1, 'first');
+      event(2, 'second');
+      await _until(() => store.entries.length == 2);
 
-    // A duplicate used to read as an agent restart and wipe everything the
-    // user was reading.
-    event(2, 'second');
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    expect(store.entries, hasLength(2));
+      // A duplicate used to read as an agent restart and wipe everything the
+      // user was reading.
+      event(2, 'second');
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(store.entries, hasLength(2));
 
-    // A real restart begins again at seq 1, and that history is stale.
-    event(1, 'after restart');
-    await _until(() => store.entries.length == 1);
-  });
+      // A real restart begins again at seq 1, and that history is stale.
+      event(1, 'after restart');
+      await _until(() => store.entries.length == 1);
+    },
+  );
 }

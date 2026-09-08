@@ -527,8 +527,10 @@ at 4 entries and 4 MiB each.
 `history` returns at most 200 messages; `before` pages backwards by message id.
 
 `models` lists every authenticated model as
-`{ provider, id, name, reasoning, contextWindow, image }`: a client choosing
-between two rows needs more than an id that is really a date stamp.
+`{ provider, id, name, reasoning, contextWindow, image, thinking }`: a client
+choosing between two rows needs more than an id that is really a date stamp.
+`thinking` is the levels that model accepts, absent when it has no
+controllable effort surface.
 
 ### Changing session settings
 
@@ -545,7 +547,12 @@ between two rows needs more than an id that is really a date stamp.
 | `set_active_tools` | `{ names }`               | `{ active }`             |
 | `set_todos`       | `{ phases }`               | `{ todos }`              |
 
-`level` is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
+`level` is one of the values `models` reports for the model in use, plus
+`inherit` and `off`, which every model accepts. The set differs per model:
+`xhigh` exists on some and not others, and a model with no controllable
+effort surface reports none at all, which a client should render as a
+disabled control rather than a full list. `state.thinkingLevels` carries the
+current model's set so a client does not have to re-read the model list.
 Steering and follow-up modes are `all` or `one-at-a-time`; interrupt mode is
 `immediate` or `wait`.
 
@@ -592,26 +599,40 @@ own UI.
 
 | `cmd`             | `args`                    | Reply `data`                 |
 | ----------------- | ------------------------- | ---------------------------- |
-| `new_session`     | `{}`                      | `{ sessionId }`              |
-| `switch_session`  | `{ sessionFile }`         | `{ sessionId }`              |
+| `new_session`     | `{}`                      | `{ started: true }`          |
+| `end_session`     | `{}`                      | `{ ended: true }`            |
+| `switch_session`  | `{ sessionFile }`         | `{ switched: true, sessionFile }` |
 | `list_sessions`   | `{ limit? }`              | `{ sessions }`               |
 | `branch`          | `{ entryId }`             | `{ sessionId }`              |
 | `compact`         | `{ instructions? }`       | `{ compacted: true }`        |
 | `set_session_name`| `{ name }`                | `{ sessionName }`            |
 
+`end_session` leaves the current session for a fresh one and deletes nothing:
+the transcript stays on disk and can be reopened at the workstation. It is
+not a process exit. `ctx.shutdown()` looked like the right call but is
+documented as a request the host may ignore, and it is ignored in both TUI
+and RPC mode, so a command built on it reported success and did nothing.
+
+`new_session`, `end_session`, and `switch_session` need
+`ExtensionCommandContext`, which only a slash-command handler receives. The
+plugin keeps the one `/remote` was last invoked with, and `/remote` is how a
+session gets paired, so it is present in practice; a client that paired some
+other way gets an error naming what to run.
+
 ### The prompt queue
 
 There is one queue and omp owns it. A plain `prompt` sent while the agent is
-streaming is handed straight over as `aside`, which puts it in the same
-pending queue a message typed at the workstation lands in and delivers it at
-the next step boundary, without cutting into the in-flight tool batch.
-`steer`, `follow_up`, and `aside` are interruptions by definition and behave
-as they always did.
+streaming is queued as `steer`, which drains one message per agent step
+boundary: it arrives mid-turn rather than after it, and until then it sits in
+the queue the workstation renders and can edit. `aside` reaches the same
+boundary but never enters that queue, which is why a message sent that way
+was invisible on both screens.
 
 `state.queued` reports whether anything is pending. It is presence, not a
 count: `ExtensionContext` exposes only `hasPendingMessages()`, with no way to
-list, edit, or drop an entry, so a client cannot show or change the queue.
-The workstation's own composer is where a pending message is edited.
+list, edit, or drop an entry, and `AgentSession.getQueuedMessages()` is not
+reachable from an extension. A client can therefore show only what it sent
+itself, and editing or dropping an entry is a workstation action.
 
 ### The four commands a client can run
 

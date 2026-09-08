@@ -263,6 +263,11 @@ export interface StateSnapshot {
 	cwd: string;
 	model?: ModelRef;
 	thinkingLevel?: string;
+	/// The thinking levels the current model accepts, least to most
+	/// intensive, with `inherit` and `off` first. Absent when the model has
+	/// no controllable effort surface, which a client should render as a
+	/// disabled control rather than a full list.
+	thinkingLevels?: string[];
 	streaming: boolean;
 	compacting?: boolean;
 	/// Whether omp has a message pending behind the current turn.
@@ -370,7 +375,9 @@ export interface CmdAbortBashArgs {
 	id: string;
 }
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+// Mirrors `ThinkingLevel` in @oh-my-pi/pi-agent-core exactly. `inherit` is a
+// real selection, not an absence: it defers to the higher-level setting.
+export const THINKING_LEVELS = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const STEERING_FOLLOWUP_MODES = ["all", "one-at-a-time"] as const;
 export const INTERRUPT_MODES = ["immediate", "wait"] as const;
 export const DELIVER_AS_VALUES = ["steer", "followUp", "aside"] as const;

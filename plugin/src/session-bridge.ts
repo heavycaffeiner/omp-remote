@@ -5,7 +5,7 @@
 // about the other's transport details.
 
 import * as os from "node:os";
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import {
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
 	TASK_SUBAGENT_PROGRESS_CHANNEL,
@@ -97,6 +97,9 @@ export class SessionBridge {
 	/// True once a transcript has been replayed, so a late subscriber does not
 	/// trigger a second pass over the same branch.
 	historyReplayed = false;
+	/// The transcript already replayed into the event stream. A repeated
+	/// `session_start` for the same one must not append it a second time.
+	private replayedSessionId: string | undefined;
 
 	/// Write-tool arguments held between `tool_execution_start` and its end,
 	/// because the result carries neither the content nor a diff.
@@ -110,6 +113,12 @@ export class SessionBridge {
 	private eventsSent = 0;
 	private lastError: string | undefined;
 
+	/// A command handler's context, which is the only one carrying
+	/// `newSession`/`switchSession`/`branch`. The plain `ExtensionContext`
+	/// every event handler receives does not, so a client asking for a new
+	/// session has nothing to call without this.
+	private commandCtx: ExtensionCommandContext | undefined;
+
 	constructor(pi: ExtensionAPI, config: RemoteConfig) {
 		this.pi = pi;
 		this.config = config;
@@ -117,6 +126,17 @@ export class SessionBridge {
 
 	get agentId(): string {
 		return this.config.agentId;
+	}
+
+	/// Kept from every command handler invocation. The context is live only
+	/// for that call, but its actions stay valid for the session, and it is
+	/// the only route to `newSession` and `switchSession`.
+	rememberCommandCtx(ctx: ExtensionCommandContext): void {
+		this.commandCtx = ctx;
+	}
+
+	getCommandCtx(): ExtensionCommandContext | undefined {
+		return this.commandCtx;
 	}
 
 	/// The name a client shows for this session. The folder alone collides as
@@ -235,6 +255,12 @@ export class SessionBridge {
 		if (sessionFile !== undefined) snapshot.sessionFile = sessionFile;
 		if (modelRef !== undefined) snapshot.model = modelRef;
 		if (thinkingLevel !== undefined) snapshot.thinkingLevel = thinkingLevel;
+		// Which levels this model accepts, so a client offers exactly those:
+		// `high` and `xhigh` exist on some models and not others.
+		const efforts = ctx?.model?.thinking?.efforts;
+		if (efforts !== undefined && efforts.length > 0) {
+			snapshot.thinkingLevels = ["inherit", "off", ...efforts];
+		}
 		snapshot.compacting = this.compacting;
 		if (contextUsage !== undefined) snapshot.contextUsage = contextUsage;
 		if (this.lastTodos !== undefined) snapshot.todos = this.lastTodos;
@@ -356,10 +382,23 @@ export class SessionBridge {
 		}, 0);
 	}
 
-	// Replays whatever the branch holds now. Safe to call more than once: a
-	// second call re-sends the same transcript, which a client applies as a
-	// duplicate seq and drops.
+	// Replays the branch into the event stream, once per transcript.
+	//
+	// Every replayed entry is broadcast under a fresh, higher seq, so a second
+	// replay of the same transcript is not a duplicate a client can drop: it
+	// appends the whole history again and evicts the real events from the
+	// retained buffer. `session_start` fires more than once for one resumed
+	// session, which is the repeat worth suppressing; a switch, branch or tree
+	// move lands on a transcript the client has never seen and must replay.
 	replayHistory(ctx: ExtensionContext): void {
+		let sessionId: string | undefined;
+		try {
+			sessionId = ctx.sessionManager.getSessionId();
+		} catch {
+			sessionId = undefined;
+		}
+		if (sessionId !== undefined && sessionId === this.replayedSessionId) return;
+
 		let entries: readonly unknown[];
 		try {
 			entries = ctx.sessionManager.getBranch();
@@ -369,6 +408,7 @@ export class SessionBridge {
 		const events = buildHistoryEvents(entries);
 		if (events.length === 0) return;
 		this.historyReplayed = true;
+		this.replayedSessionId = sessionId;
 		// The whole branch, not a window of it: the retained buffer is bounded
 		// by bytes and sized to hold a full session, and trimming here is what
 		// left a resumed conversation starting mid-sentence.

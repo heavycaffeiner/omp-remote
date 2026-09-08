@@ -10,6 +10,7 @@ import '../relay_client.dart';
 import '../session_store.dart';
 import '../theme.dart';
 import '../widgets/interactive_request_card.dart';
+import '../widgets/queue_panel.dart';
 import '../widgets/state_header.dart';
 import '../widgets/subagent_panel.dart';
 import '../widgets/todo_panel.dart';
@@ -171,12 +172,17 @@ class _SessionScreenState extends State<SessionScreen>
   Future<void> _sendPrompt() async {
     final text = _promptController.text.trim();
     if (text.isEmpty || !_canControl) return;
+    final busy = !(_sessionStore.state?.streaming == false);
     setState(() => _sending = true);
     try {
       await widget.relayClient.sendCommand(
         CommandName.prompt,
         args: {'text': text},
       );
+      // Sent while the agent was working, so it went into omp's queue rather
+      // than starting a turn. Remembering it here is the only way the panel
+      // can show what is waiting: the queue's contents are not readable.
+      if (busy) _sessionStore.noteQueuedPrompt(text);
       _promptController.clear();
     } catch (e) {
       if (mounted) {
@@ -315,6 +321,10 @@ class _SessionScreenState extends State<SessionScreen>
               SubagentPanel(subagents: _sessionStore.subagents),
             TodoPanel(todos: _sessionStore.todos),
             Expanded(child: TranscriptView(sessionStore: _sessionStore)),
+            QueuePanel(
+              queued: _sessionStore.state?.queued ?? 0,
+              sent: _sessionStore.sentQueue,
+            ),
             _buildComposer(context, streaming),
           ],
         ),

@@ -6,6 +6,7 @@
 
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Model } from "@oh-my-pi/pi-ai";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { DELIVER_AS_VALUES, THINKING_LEVELS } from "./protocol-types.js";
 import { BTW_TASK, OMFG_TASK, runSideTask, type SideTask } from "./btw.js";
@@ -17,6 +18,7 @@ import type { SessionBridge } from "./session-bridge.js";
 // every key; TypeScript's string enums are nominal, so a validated wire
 // string still needs this lookup rather than a cast to reach the real type.
 const THINKING_LEVEL_BY_WIRE: Record<(typeof THINKING_LEVELS)[number], ThinkingLevel> = {
+	inherit: ThinkingLevel.Inherit,
 	off: ThinkingLevel.Off,
 	minimal: ThinkingLevel.Minimal,
 	low: ThinkingLevel.Low,
@@ -149,6 +151,8 @@ async function dispatch(
 
 		case "new_session":
 			return cmdNewSession(bridge);
+		case "end_session":
+			return cmdEndSession(bridge);
 		case "switch_session":
 			return cmdSwitchSession(bridge, args);
 		case "list_sessions":
@@ -246,12 +250,12 @@ function cmdPrompt(bridge: SessionBridge, pi: ExtensionAPI, args: unknown): Comm
 	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
 	const ctx = ctxResult;
 
-	// A plain prompt sent mid-turn goes into omp's own pending queue, the same
-	// one a message typed at the workstation lands in, delivered `aside` so it
-	// arrives at the next step boundary instead of waiting for the whole turn
-	// to finish. One queue, whoever it came from.
-	const effective =
-		deliverAs ?? (ctx.isIdle() ? undefined : ("aside" as const));
+	// A plain prompt sent mid-turn is queued as `steer`: it drains one message
+	// per agent step boundary, so it still arrives mid-turn rather than after
+	// it, and it sits in the queue the workstation renders and can edit until
+	// then. `aside` arrives at the same boundary but never enters that queue,
+	// which left a queued message invisible on both screens.
+	const effective = deliverAs ?? (ctx.isIdle() ? undefined : ("steer" as const));
 	pi.sendUserMessage(text, effective !== undefined ? { deliverAs: effective } : undefined);
 	return ok({ accepted: true });
 }
@@ -444,6 +448,19 @@ function cmdCommands(): CommandResult {
 	return ok({ commands: APP_COMMANDS.map((entry) => ({ ...entry, source: "builtin" })) });
 }
 
+/// The thinking levels a model accepts, in the order a picker should show
+/// them. The catalog lists provider efforts; `inherit` and `off` are
+/// agent-local selectors that exist for every model, so they are prepended
+/// rather than expected in the catalog's list.
+///
+/// Undefined when the model has no controllable effort surface: a client
+/// should disable the control rather than offer a list nothing accepts.
+function thinkingLevelsFor(model: Model): string[] | undefined {
+	const efforts = model.thinking?.efforts;
+	if (!efforts || efforts.length === 0) return undefined;
+	return ["inherit", "off", ...efforts];
+}
+
 // Every authenticated model, with enough of each row for a phone to choose
 // one without guessing from an id: the display name, whether it reasons, and
 // its context window. The role assignments ride along, so the settings
@@ -459,6 +476,10 @@ function cmdModels(bridge: SessionBridge): CommandResult {
 		reasoning: m.reasoning,
 		contextWindow: m.contextWindow ?? undefined,
 		image: m.input.includes("image"),
+		// What this model actually accepts. `high` exists on some models and
+		// not others, so a fixed list offered levels that would be rejected
+		// or silently clamped. Absent means no effort control at all.
+		thinking: thinkingLevelsFor(m),
 	}));
 	const current = ctx.models.current();
 	return ok({
@@ -627,25 +648,54 @@ function cmdSetAutoCompaction(bridge: SessionBridge, args: unknown): CommandResu
 // itself exposes `compact()` directly (see ExtensionContextActions).
 // -----------------------------------------------------------------------
 
-function cmdNewSession(bridge: SessionBridge): CommandResult {
-	const ctxResult = requireCtx(bridge);
-	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
-	return fail(
-		"new_session requires ExtensionCommandContext.newSession, only reachable from a slash-command handler, not from a command dispatched by this transport",
-	);
+// Both need `ExtensionCommandContext`, which only a slash-command handler
+// receives; the bridge keeps the one `/remote` was last invoked with. A
+// session paired by typing a code has never run it, so this can genuinely be
+// missing, and the error says what to do rather than blaming the API.
+async function cmdNewSession(bridge: SessionBridge): Promise<CommandResult> {
+	const ctx = bridge.getCommandCtx();
+	if (!ctx) {
+		return fail(
+			"starting a new session needs a command context, which only a slash command carries: run /remote once at the workstation, or use end_session to close this one",
+		);
+	}
+	const outcome = await ctx.newSession();
+	if (outcome.cancelled) return fail("the workstation cancelled the new session");
+	return ok({ started: true });
 }
 
-function cmdSwitchSession(bridge: SessionBridge, args: unknown): CommandResult {
+async function cmdSwitchSession(bridge: SessionBridge, args: unknown): Promise<CommandResult> {
 	const record = asRecord(args);
 	if (!record) return fail('"args" must be an object with a "sessionFile" field');
 	const sessionFile = requireString(record, "sessionFile");
 	if (isErrorResult(sessionFile)) return fail(sessionFile.error);
 
-	const ctxResult = requireCtx(bridge);
-	if (isErrorResult(ctxResult)) return fail(ctxResult.error);
-	return fail(
-		"switch_session requires ExtensionCommandContext.switchSession, only reachable from a slash-command handler, not from a command dispatched by this transport",
-	);
+	const ctx = bridge.getCommandCtx();
+	if (!ctx) {
+		return fail("run /remote once in this session first: switching sessions needs a command context, and only a slash command carries one");
+	}
+	const outcome = await ctx.switchSession(sessionFile);
+	if (outcome.cancelled) return fail("the workstation cancelled the switch");
+	return ok({ switched: true, sessionFile });
+}
+
+// Ends this session by leaving it for a fresh one, which is the only route
+// that works: `ctx.shutdown()` is documented as a request, and the host
+// honours it in neither TUI nor RPC mode, so a command built on it returned
+// success and did nothing.
+//
+// The transcript is untouched on disk either way, so ending is reversible by
+// reopening it at the workstation.
+async function cmdEndSession(bridge: SessionBridge): Promise<CommandResult> {
+	const ctx = bridge.getCommandCtx();
+	if (!ctx) {
+		return fail(
+			"ending a session needs a command context, which only a slash command carries: run /remote once at the workstation first",
+		);
+	}
+	const outcome = await ctx.newSession();
+	if (outcome.cancelled) return fail("the workstation cancelled ending the session");
+	return ok({ ended: true });
 }
 
 interface SessionSummary {

@@ -32,16 +32,14 @@ void main() {
 
     test('the matching request_cancel cancels the same notification id', () {
       final decider = NotificationDecider();
-      final shown =
-          decider.decide(
-                const RequestFrame(
-                  agentId: 'a1',
-                  id: 'req-1',
-                  request: ConfirmRequest(title: 'Run tests?', message: ''),
-                ),
-                sessionLabel: _label,
-              )
-              as ShowNotification;
+      final shown = decider.decide(
+        const RequestFrame(
+          agentId: 'a1',
+          id: 'req-1',
+          request: ConfirmRequest(title: 'Run tests?', message: ''),
+        ),
+        sessionLabel: _label,
+      ) as ShowNotification;
 
       final action = decider.decide(
         const RequestCancelFrame(
@@ -173,7 +171,10 @@ void main() {
         sessionLabel: _label,
       );
       expect(action, isA<ShowNotification>());
-      expect((action as ShowNotification).priority, NotificationPriority.normal);
+      expect(
+        (action as ShowNotification).priority,
+        NotificationPriority.normal,
+      );
     });
 
     test('an error notice notifies', () {
@@ -189,23 +190,30 @@ void main() {
       expect(action, isA<ShowNotification>());
     });
 
-    test('agent_end with terminal: false does not notify (more work is scheduled)', () {
+    test(
+      'agent_end with terminal: false does not notify (more work is scheduled)',
+      () {
+        final decider = NotificationDecider();
+        final action = decider.decide(
+          const EventFrame(
+            agentId: 'a1',
+            seq: 1,
+            event: AgentEndEvent(terminal: false),
+          ),
+          sessionLabel: _label,
+        );
+        expect(action, isNull);
+      },
+    );
+
+    test('agent_end with terminal: true notifies at normal priority, naming the session', () {
       final decider = NotificationDecider();
       final action = decider.decide(
         const EventFrame(
           agentId: 'a1',
           seq: 1,
-          event: AgentEndEvent(terminal: false),
+          event: AgentEndEvent(terminal: true),
         ),
-        sessionLabel: _label,
-      );
-      expect(action, isNull);
-    });
-
-    test('agent_end with terminal: true notifies at normal priority, naming the session', () {
-      final decider = NotificationDecider();
-      final action = decider.decide(
-        const EventFrame(agentId: 'a1', seq: 1, event: AgentEndEvent(terminal: true)),
         sessionLabel: _label,
       );
       expect(action, isA<ShowNotification>());
@@ -218,7 +226,11 @@ void main() {
     test('agent_end is suppressed when that session is on screen in the foreground', () {
       final decider = NotificationDecider();
       final action = decider.decide(
-        const EventFrame(agentId: 'a1', seq: 1, event: AgentEndEvent(terminal: true)),
+        const EventFrame(
+          agentId: 'a1',
+          seq: 1,
+          event: AgentEndEvent(terminal: true),
+        ),
         sessionLabel: _label,
         foreground: const NotificationForegroundState(
           appInForeground: true,
@@ -234,7 +246,12 @@ void main() {
         const EventFrame(
           agentId: 'a1',
           seq: 1,
-          event: ToolEndEvent(id: 't1', name: 'bash', ok: false, text: 'exit 1'),
+          event: ToolEndEvent(
+            id: 't1',
+            name: 'bash',
+            ok: false,
+            text: 'exit 1',
+          ),
         ),
         sessionLabel: _label,
       );
@@ -277,9 +294,21 @@ void main() {
     test('welcome, agents, state, and reply frames never notify', () {
       final decider = NotificationDecider();
       for (final frame in [
-        const WelcomeFrame(protocol: 2, clientId: 'c1', role: ClientRole.control, agents: []),
+        const WelcomeFrame(
+          protocol: 2,
+          clientId: 'c1',
+          role: ClientRole.control,
+          agents: [],
+        ),
         const AgentsFrame(agents: []),
-        StateFrame(agentId: 'a1', state: StateSnapshot.fromJson({'streaming': false, 'compacting': false, 'queued': 0})),
+        StateFrame(
+          agentId: 'a1',
+          state: StateSnapshot.fromJson({
+            'streaming': false,
+            'compacting': false,
+            'queued': 0,
+          }),
+        ),
         const ReplyFrame(id: 'cmd-1', ok: true),
       ]) {
         expect(decider.decide(frame, sessionLabel: _label), isNull);
@@ -309,24 +338,41 @@ void main() {
   });
 
   group('resetForAgent', () {
-    test('clears dedup state only for the given agent, letting it notify again', () {
+    test(
+      'clears dedup state only for the given agent, letting it notify again',
+      () {
+        final decider = NotificationDecider();
+        const frame = EventFrame(
+          agentId: 'a1',
+          seq: 1,
+          event: NoticeEvent(level: 'error', text: 'boom'),
+        );
+        expect(
+          decider.decide(frame, sessionLabel: _label),
+          isA<ShowNotification>(),
+        );
+        expect(decider.decide(frame, sessionLabel: _label), isNull);
+
+        decider.resetForAgent('a1');
+        expect(
+          decider.decide(frame, sessionLabel: _label),
+          isA<ShowNotification>(),
+        );
+      },
+    );
+
+    test('does not affect another agent\'s dedup state', () {
       final decider = NotificationDecider();
-      const frame = EventFrame(
+      const frameA = EventFrame(
         agentId: 'a1',
         seq: 1,
         event: NoticeEvent(level: 'error', text: 'boom'),
       );
-      expect(decider.decide(frame, sessionLabel: _label), isA<ShowNotification>());
-      expect(decider.decide(frame, sessionLabel: _label), isNull);
-
-      decider.resetForAgent('a1');
-      expect(decider.decide(frame, sessionLabel: _label), isA<ShowNotification>());
-    });
-
-    test('does not affect another agent\'s dedup state', () {
-      final decider = NotificationDecider();
-      const frameA = EventFrame(agentId: 'a1', seq: 1, event: NoticeEvent(level: 'error', text: 'boom'));
-      const frameB = EventFrame(agentId: 'b1', seq: 1, event: NoticeEvent(level: 'error', text: 'boom'));
+      const frameB = EventFrame(
+        agentId: 'b1',
+        seq: 1,
+        event: NoticeEvent(level: 'error', text: 'boom'),
+      );
       decider.decide(frameA, sessionLabel: _label);
       decider.decide(frameB, sessionLabel: _label);
 

@@ -53,6 +53,38 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
     }
   }
 
+  /// Ends this session: omp shuts down gracefully and the transcript stays on
+  /// disk, so it can be reopened later. Nothing is deleted, which is what the
+  /// dialog promises and what `end_session` does.
+  Future<void> _confirmEnd() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('End this session?'),
+        content: const Text(
+          'The agent stops working on it and a fresh session takes its place. '
+          'The conversation stays saved on the workstation and can be '
+          'reopened there; nothing is deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('End session'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _run(
+      () => widget.relayClient.sendCommand(CommandName.endSession),
+      successMessage: 'Session ended',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -170,6 +202,16 @@ class _SessionMenuSheetState extends State<SessionMenuSheet> {
                       ),
                 icon: const Icon(Icons.add_box_outlined),
                 label: const Text('New session'),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Semantics(
+              button: true,
+              label: 'End this session',
+              child: OutlinedButton.icon(
+                onPressed: disabled ? null : _confirmEnd,
+                icon: const Icon(Icons.logout),
+                label: const Text('End session'),
               ),
             ),
             if (state?.todos != null && state!.todos!.isNotEmpty) ...[

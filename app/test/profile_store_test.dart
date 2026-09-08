@@ -24,11 +24,14 @@ Future<ProfileStore> _emptyStore() async {
 }
 
 void main() {
-  test('saves the first profile on a store that has never been written', () async {
-    final store = await _emptyStore();
-    await store.upsert(_profile('1'));
-    expect(store.readAll().map((p) => p.id), ['1']);
-  });
+  test(
+    'saves the first profile on a store that has never been written',
+    () async {
+      final store = await _emptyStore();
+      await store.upsert(_profile('1'));
+      expect(store.readAll().map((p) => p.id), ['1']);
+    },
+  );
 
   test('removing from an empty store is a no-op rather than a throw', () async {
     final store = await _emptyStore();
@@ -53,15 +56,18 @@ void main() {
     expect(store.readAll().map((p) => p.id), ['b', 'a']);
   });
 
-  test('survives a corrupt stored payload instead of crashing the list', () async {
-    SharedPreferences.setMockInitialValues({
-      'remote_omp.profiles.v1': 'not json',
-    });
-    final store = ProfileStore(await SharedPreferences.getInstance());
-    expect(store.readAll(), isEmpty);
-    await store.upsert(_profile('1'));
-    expect(store.readAll().map((p) => p.id), ['1']);
-  });
+  test(
+    'survives a corrupt stored payload instead of crashing the list',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'remote_omp.profiles.v1': 'not json',
+      });
+      final store = ProfileStore(await SharedPreferences.getInstance());
+      expect(store.readAll(), isEmpty);
+      await store.upsert(_profile('1'));
+      expect(store.readAll().map((p) => p.id), ['1']);
+    },
+  );
 
   test('round-trips the transport, which is no longer derived', () async {
     final store = await _emptyStore();

@@ -247,17 +247,27 @@ class _TranscriptRow extends StatelessWidget {
 /// one 14dp line and no horizontal space, where a fixed gutter costs the
 /// content width of every row in the transcript.
 class _RoleLabel extends StatelessWidget {
-  const _RoleLabel({required this.label, required this.color});
+  const _RoleLabel({
+    required this.label,
+    required this.color,
+    this.wrap = false,
+  });
 
   final String label;
   final Color color;
+
+  /// Whether a label too long for its row wraps rather than being cut. A
+  /// speaker label is one short word and never needs it; a session marker
+  /// names a model id and does.
+  final bool wrap;
 
   @override
   Widget build(BuildContext context) {
     return Text(
       label.toUpperCase(),
-      maxLines: 1,
+      maxLines: wrap ? 3 : 1,
       overflow: TextOverflow.ellipsis,
+      textAlign: wrap ? TextAlign.center : TextAlign.start,
       style: monospaceStyle(context, fontSize: _labelSize).copyWith(
         color: color,
         fontWeight: FontWeight.w700,
@@ -785,10 +795,27 @@ class _ToolCardState extends State<_ToolCard> {
     // most of a phone's width on a prefix every row shares, and then
     // ellipsized the filename, which is the part that identifies the call.
     final path = _relativeToCwd(entry.path, widget.cwd);
-    final summary = (path != null && path.isNotEmpty)
-        ? path
-        : _relativeToCwd(_summarizeToolInput(entry.toolInput), widget.cwd) ??
-              '';
+    // A finished call whose whole output is one short line says more with the
+    // result than with its arguments: `ask` collapsed to the word
+    // "questions", hiding the answer that was the point of asking.
+    final result = entry.text.trim();
+    final oneLineResult =
+        !entry.open &&
+            entry.toolOk != false &&
+            result.isNotEmpty &&
+            !result.contains('\n') &&
+            result.length <= 80
+        ? result
+        : null;
+    final summary =
+        oneLineResult ??
+        ((path != null && path.isNotEmpty)
+            ? path
+            : _relativeToCwd(
+                    _summarizeToolInput(entry.toolInput),
+                    widget.cwd,
+                  ) ??
+                  '');
     final statusLabel = entry.open
         ? 'running'
         : (entry.toolOk == false ? 'failed' : 'done');
@@ -961,9 +988,18 @@ class _MarkerRow extends StatelessWidget {
       child: Row(
         children: [
           line,
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-            child: _RoleLabel(label: text, color: scheme.onSurfaceVariant),
+          // Flexible, not fixed: a marker naming a model id is longer than
+          // the space two dividers leave it, and a fixed label overflowed
+          // the row rather than giving any of it back.
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+              child: _RoleLabel(
+                label: text,
+                color: scheme.onSurfaceVariant,
+                wrap: true,
+              ),
+            ),
           ),
           line,
         ],

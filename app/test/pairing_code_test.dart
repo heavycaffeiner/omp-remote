@@ -62,7 +62,11 @@ void main() {
         'agent': 12345, // wrong type: int instead of string
       };
       expect(
-        () => DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788),
+        () => DiscoveredWorkstation.fromJson(
+          json,
+          host: '100.64.0.3',
+          port: 8788,
+        ),
         returnsNormally,
       );
       expect(
@@ -84,7 +88,11 @@ void main() {
           {'agentId': 42}, // malformed entry is skipped, not fatal
         ],
       };
-      final found = DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788);
+      final found = DiscoveredWorkstation.fromJson(
+        json,
+        host: '100.64.0.3',
+        port: 8788,
+      );
       expect(found, isNotNull);
       expect(found!.sessions.map((s) => s.agentId), [
         'laptop/proj#ab12',
@@ -100,7 +108,11 @@ void main() {
         'name': 'omp-remote',
         'agent': 'laptop/proj#ab12',
       };
-      final found = DiscoveredWorkstation.fromJson(json, host: '100.64.0.3', port: 8788);
+      final found = DiscoveredWorkstation.fromJson(
+        json,
+        host: '100.64.0.3',
+        port: 8788,
+      );
       expect(found?.sessions.single.agentId, 'laptop/proj#ab12');
     });
   });

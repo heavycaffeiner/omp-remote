@@ -255,15 +255,17 @@ Known, and unlikely to change without upstream API work.
   model as text. The app offers `todo`, `compact`, `btw`, and `omfg`, each
   reimplemented through an API that is reachable. Everything else stays at
   the workstation.
-- **The pending queue cannot be edited from the phone.** There is one queue
-  and omp owns it; `ExtensionContext` reports only whether something is
-  waiting. A mid-turn prompt still arrives at the next step boundary, the
-  same as one typed at the workstation.
+- **The pending queue is edited at the workstation.** There is one queue and
+  omp owns it; `ExtensionContext` reports only whether something is waiting,
+  and `AgentSession.getQueuedMessages()` is not reachable from an extension.
+  A mid-turn prompt is queued as a steer, so it arrives at the agent's next
+  step rather than after the turn, and the app lists what it sent itself.
 - **Some settings are unreachable.** `set_steering_mode`,
   `set_follow_up_mode`, `set_interrupt_mode`, `cycle_model`, `stats`,
-  `new_session`, `switch_session`, and `branch` live on a session object
-  extensions never receive. Each fails with an explicit error rather than
-  pretending to work.
+  `set_fast_mode`, and `branch` live on a session object extensions never
+  receive. Each fails with an explicit error rather than pretending to work.
+  `new_session`, `end_session`, and `switch_session` need the context a slash
+  command carries, which `/remote` captures when you pair.
 - **Prompts from other extensions are not forwarded.** Only this plugin's own
   tools, the shadowed `ask`, and tool denials reach your phone.
 
